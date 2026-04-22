@@ -1,0 +1,13 @@
+.vscode/**
+node_modules/**
+src/**
+test/**
+esbuild.mjs
+tsconfig.json
+**/*.ts
+**/*.map
+*.tgz
+DESIGNS.md
+PLANS.md
+TESTS.md
+.claude/**

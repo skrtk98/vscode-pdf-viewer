@@ -1,0 +1,59 @@
+{
+  "name": "mupdf-viewer",
+  "displayName": "MuPDF Viewer",
+  "description": "PDF Viewer for VSCode using MuPDF WASM",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "pdfViewer.pdfEditor",
+        "displayName": "MuPDF Viewer",
+        "selector": [
+          {
+            "filenamePattern": "*.pdf"
+          }
+        ],
+        "priority": "default"
+      }
+    ],
+    "configuration": {
+      "title": "MuPDF Viewer",
+      "properties": {
+        "pdfViewer.defaultZoom": {
+          "type": "number",
+          "default": 1.0,
+          "description": "Default zoom level for PDF view"
+        },
+        "pdfViewer.renderResolution": {
+          "type": "number",
+          "default": 96,
+          "description": "Rendering resolution in DPI"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "mupdf": "^1.27.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.3.0",
+    "vitest": "^2.0.0"
+  },
+  "license": "AGPL-3.0",
+  "publisher": "skrtk98"
+}

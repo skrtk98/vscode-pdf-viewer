@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy"
+    content="default-src 'none';
+             script-src 'nonce-${nonce}' ${cspSrc} 'wasm-unsafe-eval';
+             style-src 'nonce-${nonce}' ${cspSrc};
+             img-src ${cspSrc} data: blob:;
+             worker-src ${cspSrc} blob:;
+             connect-src ${cspSrc};">
+  <title>PDF Preview</title>
+  <link rel="stylesheet" nonce="${nonce}" href="${cssUri}">
+</head>
+<body>
+  <div id="toolbar">
+    <div id="toolbar-left">
+      <button id="btn-sidebar" class="tab-btn" title="Toggle outline">&#9776;</button>
+    </div>
+    <div id="toolbar-center">
+      <div id="nav-controls">
+        <button id="btn-prev" title="Previous page">&#8249;</button>
+        <input id="page-input" type="number" min="1" value="1" title="Current page">
+        <span id="page-sep">/</span>
+        <span id="page-count">1</span>
+        <button id="btn-next" title="Next page">&#8250;</button>
+      </div>
+      <div id="zoom-controls">
+        <button id="btn-zoom-out" title="Zoom out">&#8722;</button>
+        <input id="zoom-input" type="text" value="100%" title="Zoom level (e.g. 150% or 1.5)">
+        <button id="btn-zoom-in" title="Zoom in">&#43;</button>
+        <button id="btn-fit-width" class="tab-btn" title="Fit width">&#8596;</button>
+        <button id="btn-fit-page" class="tab-btn" title="Fit page">&#9974;</button>
+      </div>
+      <div id="rotate-controls">
+        <button id="btn-rotate" title="Rotate 90°">&#8635;</button>
+        <button id="btn-view-mode" class="tab-btn" title="Switch to single page view">&#9783;</button>
+      </div>
+      <div id="search-controls">
+        <input id="search-input" type="text" placeholder="Search…" title="Search text">
+        <button id="btn-search-prev" title="Previous match">&#8593;</button>
+        <button id="btn-search-next" title="Next match">&#8595;</button>
+        <span id="search-info"></span>
+      </div>
+    </div>
+    <div id="toolbar-right">
+      <button id="btn-thumbs" class="tab-btn" title="Toggle thumbnails">&#9724;</button>
+    </div>
+  </div>
+  <div id="main">
+    <div id="sidebar" class="hidden">
+      <div id="sidebar-header">
+        <button id="tab-outline" title="Outline">&#9776; Outline</button>
+      </div>
+      <div id="outline-panel"></div>
+    </div>
+    <div id="canvas-container">
+      <div id="canvas-wrapper">
+        <canvas id="pdf-canvas"></canvas>
+        <canvas id="search-overlay"></canvas>
+      </div>
+      <div id="scroll-container" style="display:none"></div>
+    </div>
+    <div id="thumbs-sidebar" class="hidden">
+      <div id="thumbs-panel"></div>
+    </div>
+  </div>
+  <div id="status"></div>
+  <script nonce="${nonce}">
+    window.WASM_URI    = "${wasmUri}";
+    window.MUPDF_JS_URI = "${mupdfJsUri}";
+    window.WORKER_URI  = "${workerUri}";
+    // Redirect mupdf WASM lookup to the vscode-resource URI
+    globalThis["$libmupdf_wasm_Module"] = {
+      locateFile: function(filename) {
+        if (filename === 'mupdf-wasm.wasm') return window.WASM_URI;
+        return filename;
+      }
+    };
+  </script>
+  <script nonce="${nonce}" src="${viewerUri}" type="module"></script>
+</body>
+</html>

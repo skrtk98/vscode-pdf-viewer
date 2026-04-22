@@ -1,0 +1,12 @@
+node_modules/
+dist/
+media/viewer.js
+media/viewer.js.map
+media/worker.js
+media/worker.js.map
+media/mupdf.js
+media/mupdf-wasm.js
+media/mupdf.wasm
+*.tgz
+*.vsix
+.claude/
