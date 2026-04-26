@@ -812,16 +812,18 @@ function stepScale(dir: 1 | -1): void {
  *
  * @param newScale - The target scale value (clamped to [0.05, 64]).
  */
-function applyScale(newScale: number): void {
+function applyScale(newScale: number, skipFitDetect = false): void {
   scale = Math.max(0.05, Math.min(64,newScale));
   zoomInput.value = `${Math.round(scale * 100)}%`;
-  const fw = doc ? fitWidthScale() : -1;
-  const fp = doc ? fitPageScale() : -1;
-  const detected: FitMode = scale === fp ? 'page' : scale === fw ? 'width' : 'none';
-  if (detected !== fitMode) {
-    fitMode = detected;
-    btnFitWidth.classList.toggle('active', fitMode === 'width');
-    btnFitPage.classList.toggle('active', fitMode === 'page');
+  if (!skipFitDetect) {
+    const fw = doc ? fitWidthScale() : -1;
+    const fp = doc ? fitPageScale() : -1;
+    const detected: FitMode = scale === fp ? 'page' : scale === fw ? 'width' : 'none';
+    if (detected !== fitMode) {
+      fitMode = detected;
+      btnFitWidth.classList.toggle('active', fitMode === 'width');
+      btnFitPage.classList.toggle('active', fitMode === 'page');
+    }
   }
   if (viewMode === 'scroll') updateScrollModeZoom();
   else renderPage();
@@ -840,7 +842,7 @@ function setScale(newScale: number): void {
 function fitWidth(): void {
   if (!doc) return;
   const { width } = getPageDimensions(currentPage);
-  applyScale((canvasContainer.clientWidth - 32) / width);
+  applyScale((canvasContainer.clientWidth - 32) / width, true);
 }
 
 /** Zoom to fit the entire current page in the container. */
@@ -850,7 +852,7 @@ function fitPage(): void {
   applyScale(Math.min(
     (canvasContainer.clientWidth - 32) / width,
     (canvasContainer.clientHeight - 32) / height,
-  ));
+  ), true);
 }
 
 /**

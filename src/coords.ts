@@ -128,9 +128,17 @@ export function toPdfCoord(
  * @returns Typed outline tree suitable for rendering in the sidebar.
  */
 export function buildOutlineTree(items: OutlineItem[]): OutlineNode[] {
-  return items.map((item) => ({
-    title: item.title ?? '',
-    page: item.page ?? 0,
-    children: item.down ? buildOutlineTree(item.down) : [],
-  }));
+  return items.map((item) => {
+    let page = 0;
+    try {
+      page = item.page ?? 0;
+    } catch {
+      // URI or named destination — no page index
+    }
+    return {
+      title: item.title ?? '',
+      page,
+      children: item.down ? buildOutlineTree(item.down) : [],
+    };
+  });
 }
