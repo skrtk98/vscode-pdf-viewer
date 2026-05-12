@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.3]
+
+### Fixed
+- Search highlights rendered at wrong position due to coordinate-space mismatch between stext space (y-DOWN) and PDF user space (y-UP).
+
+---
+
 ## [0.0.2]
 
 ### Changed

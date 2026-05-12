@@ -515,10 +515,10 @@ function getPageHitIndex(): number {
  * @param rot - Page rotation in degrees clockwise.
  */
 function fillQuad(quad: MupdfTypes.Quad, pageW: number, pageH: number, rot: number): void {
-  const ul = toCanvasCoord(quad[0], quad[1], pageW, pageH, renderScale, 1, rot);
-  const ur = toCanvasCoord(quad[2], quad[3], pageW, pageH, renderScale, 1, rot);
-  const ll = toCanvasCoord(quad[4], quad[5], pageW, pageH, renderScale, 1, rot);
-  const lr = toCanvasCoord(quad[6], quad[7], pageW, pageH, renderScale, 1, rot);
+  const ul = stextPtToCanvas(quad[0], quad[1], pageW, pageH, renderScale, rot);
+  const ur = stextPtToCanvas(quad[2], quad[3], pageW, pageH, renderScale, rot);
+  const ll = stextPtToCanvas(quad[4], quad[5], pageW, pageH, renderScale, rot);
+  const lr = stextPtToCanvas(quad[6], quad[7], pageW, pageH, renderScale, rot);
   overlayCtx.beginPath();
   overlayCtx.moveTo(ul.x, ul.y);
   overlayCtx.lineTo(ur.x, ur.y);
@@ -1993,10 +1993,10 @@ function refreshScrollPageOverlay(pageIndex: number): void {
         const isActive = (globalBase + i) === searchHitIndex;
         ctx2d.fillStyle = isActive ? 'rgba(255,120,0,0.45)' : 'rgba(255,200,0,0.30)';
         for (const quad of hits[i]) {
-          const ul = toCanvasCoord(quad[0], quad[1], pageW, pageH, rs, 1, rot);
-          const ur = toCanvasCoord(quad[2], quad[3], pageW, pageH, rs, 1, rot);
-          const ll = toCanvasCoord(quad[4], quad[5], pageW, pageH, rs, 1, rot);
-          const lr = toCanvasCoord(quad[6], quad[7], pageW, pageH, rs, 1, rot);
+          const ul = stextPtToCanvas(quad[0], quad[1], pageW, pageH, rs, rot);
+          const ur = stextPtToCanvas(quad[2], quad[3], pageW, pageH, rs, rot);
+          const ll = stextPtToCanvas(quad[4], quad[5], pageW, pageH, rs, rot);
+          const lr = stextPtToCanvas(quad[6], quad[7], pageW, pageH, rs, rot);
           ctx2d.beginPath();
           ctx2d.moveTo(ul.x - tileAdjX, ul.y - tileAdjY);
           ctx2d.lineTo(ur.x - tileAdjX, ur.y - tileAdjY);
