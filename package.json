@@ -2,7 +2,7 @@
   "name": "mupdf-viewer",
   "displayName": "MuPDF Viewer",
   "description": "PDF Viewer for VSCode using MuPDF WASM",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "icon": "media/icon.png", 
   "engines": {
     "vscode": "^1.85.0"

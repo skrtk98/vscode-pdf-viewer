@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.6]
+
+### Changed
+- Updated README and README.ja to document right mouse button + scroll zoom, link navigation, and auto-reload, and fixed the outdated "PDF Viewer" title to "MuPDF Viewer".
+
+---
+
 ## [0.0.5]
 
 ### Added

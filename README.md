@@ -1,4 +1,4 @@
-# PDF Viewer
+# MuPDF Viewer
 
 A VS Code extension that renders PDF files using [MuPDF](https://github.com/ArtifexSoftware/mupdf) compiled to WebAssembly.
 
@@ -6,7 +6,7 @@ A VS Code extension that renders PDF files using [MuPDF](https://github.com/Arti
 
 ## Usage
 
-Open any `.pdf` file in VS Code — the viewer opens automatically as a custom editor.
+Open any `.pdf` file in VS Code — the viewer opens automatically as a custom editor. The viewer also reloads automatically whenever the file changes on disk.
 
 ### View modes
 
@@ -20,6 +20,7 @@ Click the **scroll/page** toggle button in the toolbar to switch between:
 | Action | Result |
 |--------|--------|
 | `Ctrl+Wheel` | Zoom in/out anchored to the mouse position |
+| `Right mouse button+Wheel` | Zoom in/out anchored to the mouse position |
 | `+` / `=` | Zoom in |
 | `-` | Zoom out |
 | Fit Width button | Scale to fill the container width |
@@ -35,6 +36,7 @@ Click the **scroll/page** toggle button in the toolbar to switch between:
 | Page number input | Jump to a specific page |
 | Outline sidebar entry | Jump to the bookmarked page |
 | Thumbnail | Jump to the corresponding page |
+| Click a link | Jump to the linked page, or open external URLs in the browser |
 
 ### Text selection and copy
 
