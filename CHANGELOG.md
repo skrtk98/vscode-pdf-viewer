@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.5]
+
+### Added
+- Zoom with right mouse button + scroll, in addition to Ctrl + scroll.
+
+---
+
 ## [0.0.4]
 
 ### Added

@@ -1378,6 +1378,11 @@ async function handleDoubleClick(
 }
 
 canvas.addEventListener('contextmenu', (e) => {
+  if (suppressContextMenu) {
+    suppressContextMenu = false;
+    e.preventDefault();
+    return;
+  }
   if (!doc) return;
   e.preventDefault();
   const r = canvas.getBoundingClientRect();
@@ -1398,6 +1403,11 @@ canvas.addEventListener('dblclick', async (e) => {
 });
 
 scrollContainer.addEventListener('contextmenu', (e) => {
+  if (suppressContextMenu) {
+    suppressContextMenu = false;
+    e.preventDefault();
+    return;
+  }
   if (!doc) return;
   const wrapper = (e.target as HTMLElement).closest('.scroll-page') as HTMLElement | null;
   if (!wrapper) return;
@@ -1592,9 +1602,14 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+/** Set when a right-button wheel-zoom just happened, to suppress the resulting context menu. */
+let suppressContextMenu = false;
+
 window.addEventListener('wheel', (e) => {
-  if (!e.ctrlKey) return;
+  const rightButtonDown = (e.buttons & 2) !== 0;
+  if (!e.ctrlKey && !rightButtonDown) return;
   e.preventDefault();
+  if (rightButtonDown) suppressContextMenu = true;
   const rect = canvasContainer.getBoundingClientRect();
   const mouseX = e.clientX - rect.left;
   const mouseY = e.clientY - rect.top;
@@ -1603,7 +1618,7 @@ window.addEventListener('wheel', (e) => {
 
 let pageScrollCooldown = false;
 canvasContainer.addEventListener('wheel', (e) => {
-  if (e.ctrlKey) return;
+  if (e.ctrlKey || (e.buttons & 2) !== 0) return;
   if (viewMode !== 'single') return;
   e.preventDefault();
   if (pageScrollCooldown) return;
