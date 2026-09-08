@@ -1,0 +1,74 @@
+name: Publish existing release to Open VSX
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stable release tag
+        required: true
+        default: v0.0.7
+  push:
+    branches: [main]
+    paths: [.github/workflows/publish-open-vsx.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: open-vsx-${{ inputs.tag || 'v0.0.7' }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || 'v0.0.7' }}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Validate release version
+        run: |
+          node -e 'const p = require("./package.json"); if (process.env.RELEASE_TAG !== `v${p.version}` || !/^\d+\.\d+\.\d+$/.test(p.version)) throw new Error("Expected a stable tag matching package.json");'
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - name: Build release package
+        run: npm run package -- --out mupdf-viewer.vsix --baseContentUrl "https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}" --baseImagesUrl "https://github.com/${GITHUB_REPOSITORY}/raw/${RELEASE_TAG}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: open-vsx-release-vsix
+          path: mupdf-viewer.vsix
+          if-no-files-found: error
+      - name: Create namespace if needed and publish
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          test -n "$OVSX_PAT" || { echo 'Set the OVSX_PAT repository secret.'; exit 1; }
+          node --input-type=module <<'JS'
+          import { execFileSync } from 'node:child_process';
+          import { readFileSync } from 'node:fs';
+          const { publisher } = JSON.parse(readFileSync('package.json', 'utf8'));
+          const response = await fetch(`https://open-vsx.org/api/${encodeURIComponent(publisher)}`);
+          if (response.status === 404) {
+            execFileSync('npx', ['--no-install', 'ovsx', 'create-namespace', publisher], { stdio: 'inherit' });
+          } else if (!response.ok) {
+            throw new Error(`Namespace lookup failed: ${response.status}`);
+          }
+          JS
+          npx --no-install ovsx publish mupdf-viewer.vsix --skip-duplicate
+      - name: Attach package to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes --title "$RELEASE_TAG"
+          fi
+          gh release upload "$RELEASE_TAG" mupdf-viewer.vsix --repo "$GITHUB_REPOSITORY" --clobber
