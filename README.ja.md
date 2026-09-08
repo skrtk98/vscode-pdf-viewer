@@ -3,6 +3,7 @@
 [English](README.md) | 日本語
 
 [![Visual Studio Marketplace](https://img.shields.io/visual-studio-marketplace/v/skrtk98.mupdf-viewer)](https://marketplace.visualstudio.com/items?itemName=skrtk98.mupdf-viewer)
+[![Open VSX](https://img.shields.io/open-vsx/v/skrtk98/mupdf-viewer)](https://open-vsx.org/extension/skrtk98/mupdf-viewer)
 
 マウス位置を基点としたズームと、ファイル更新時の自動再読み込みで、VS Code 内で PDF を読めます。
 WebAssembly にコンパイルした [MuPDF](https://github.com/ArtifexSoftware/mupdf) を描画エンジンに採用し、VS Code 向けの閲覧 UI を備えています。
@@ -112,6 +113,8 @@ MuPDF Viewer は、WebAssembly にコンパイルした MuPDF を描画エンジ
 ```sh
 code --install-extension skrtk98.mupdf-viewer
 ```
+
+Open VSX を利用する環境では、[Open VSX Registry](https://open-vsx.org/extension/skrtk98/mupdf-viewer) からインストールできます。
 
 PDF を開くと閲覧を開始できます。
 別の拡張機能で開く場合は、エディタのタブを右クリックし、**エディターを開くアプリケーションの選択…**（Reopen Editor With…）から **MuPDF Viewer** を選択します。

@@ -45,8 +45,15 @@ The publish commands skip versions already present, allowing a partially complet
 Do not move an already published tag or reuse a version for changed contents; publish a new version.
 
 After the first Open VSX release, verify the [listing](https://open-vsx.org/extension/skrtk98/mupdf-viewer), namespace ownership status, and installation from an Open VSX client.
-Add its installation link and badge to both READMEs once the listing is available.
 Check the Marketplace listing and GitHub Release asset as well.
+
+## Publishing an existing release to Open VSX
+
+Use the [Publish existing release to Open VSX workflow](../.github/workflows/publish-open-vsx.yml) from the GitHub Actions tab.
+Choose **Run workflow** on `main` and enter an existing stable release tag, such as `v0.0.7`.
+It checks out that tag, validates and packages it, creates the publisher namespace if absent, and publishes using `OVSX_PAT`.
+It also attaches the VSIX to the corresponding GitHub Release.
+This workflow requires only the Open VSX secret and can be used when Marketplace publication has already completed.
 
 ## Demo assets
 

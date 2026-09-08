@@ -3,6 +3,7 @@
 English | [日本語](README.ja.md)
 
 [![Visual Studio Marketplace](https://img.shields.io/visual-studio-marketplace/v/skrtk98.mupdf-viewer)](https://marketplace.visualstudio.com/items?itemName=skrtk98.mupdf-viewer)
+[![Open VSX](https://img.shields.io/open-vsx/v/skrtk98/mupdf-viewer)](https://open-vsx.org/extension/skrtk98/mupdf-viewer)
 
 Read PDFs inside VS Code with mouse-centered zoom and automatic reload when the file changes.
 Powered by [MuPDF](https://github.com/ArtifexSoftware/mupdf) compiled to WebAssembly, with a viewer interface built for VS Code.
@@ -111,6 +112,8 @@ Install **MuPDF Viewer** by **skrtk98** from the [Visual Studio Marketplace](htt
 ```sh
 code --install-extension skrtk98.mupdf-viewer
 ```
+
+For clients that use Open VSX, install from the [Open VSX Registry](https://open-vsx.org/extension/skrtk98/mupdf-viewer).
 
 Open a PDF to start reading.
 If another extension opens it, right-click the editor tab, choose **Reopen Editor With…**, and select **MuPDF Viewer**.
