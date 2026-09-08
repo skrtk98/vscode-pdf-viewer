@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.0.7]
+
+### Changed
+- Reorganized English and Japanese READMEs around PDF reading and generated-document workflows, with screenshots and zoom/reload demos.
+- Improved Marketplace description, categories, keywords, and project links.
+- Build automatically before packaging and publish tagged releases through GitHub Actions.
+
+### Fixed
+- Copy PNG data into an ArrayBuffer-backed view before creating clipboard images, resolving TypeScript Blob compatibility.
+
+---
+
 ## [0.0.6]
 
 ### Changed

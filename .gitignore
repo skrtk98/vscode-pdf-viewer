@@ -10,3 +10,5 @@ media/mupdf.wasm
 *.tgz
 *.vsix
 .claude/
+
+docs/demo/*.pdf

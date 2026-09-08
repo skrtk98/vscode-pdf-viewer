@@ -11,3 +11,7 @@ DESIGNS.md
 PLANS.md
 TESTS.md
 .claude/**
+.github/**
+docs/**
+*-plan.md
+*.vsix

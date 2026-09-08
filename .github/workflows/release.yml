@@ -1,0 +1,86 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Check tag matches package version
+        run: |
+          node -e 'const p = require("./package.json"); if (process.env.GITHUB_REF_NAME !== `v${p.version}` || !/^\d+\.\d+\.\d+$/.test(p.version)) { throw new Error("Use a stable vX.Y.Z tag matching package.json"); }'
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - name: Build and package
+        run: npm run package -- --out mupdf-viewer.vsix --baseContentUrl "https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}" --baseImagesUrl "https://github.com/${GITHUB_REPOSITORY}/raw/${GITHUB_REF_NAME}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extension-vsix
+          path: mupdf-viewer.vsix
+          if-no-files-found: error
+
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        registry: [marketplace, open-vsx]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: extension-vsix
+      - name: Publish to Visual Studio Marketplace
+        if: matrix.registry == 'marketplace'
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          test -n "$VSCE_PAT" || { echo 'Set the VSCE_PAT repository secret.'; exit 1; }
+          npx --no-install vsce publish --packagePath mupdf-viewer.vsix --skip-duplicate
+      - name: Publish to Open VSX
+        if: matrix.registry == 'open-vsx'
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          test -n "$OVSX_PAT" || { echo 'Set the OVSX_PAT repository secret.'; exit 1; }
+          npx --no-install ovsx publish mupdf-viewer.vsix --skip-duplicate
+
+  github-release:
+    needs: [package, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: extension-vsix
+      - name: Create release and attach the published VSIX
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
+          fi
+          gh release upload "$GITHUB_REF_NAME" mupdf-viewer.vsix --repo "$GITHUB_REPOSITORY" --clobber

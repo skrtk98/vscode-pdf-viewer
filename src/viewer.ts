@@ -1264,7 +1264,7 @@ function cssToStext(cssX: number, cssY: number, pageIndex: number, rs: number): 
  * @param pngBytes - Raw PNG image data.
  */
 async function copyPngToClipboard(pngBytes: Uint8Array): Promise<void> {
-  const blob = new Blob([pngBytes], { type: 'image/png' });
+  const blob = new Blob([new Uint8Array(pngBytes)], { type: 'image/png' });
   try {
     await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
     showStatus('Image copied to clipboard');
