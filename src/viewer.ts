@@ -570,7 +570,7 @@ function loadDocument(data: Uint8Array, password?: string, settings?: { defaultZ
       outlinePanel.innerHTML = '<div style="padding:8px;font-size:11px;color:var(--vscode-descriptionForeground)">No outline</div>';
     }
 
-    clearSearch();
+    clearSearch(false);
     if (viewMode === 'scroll') {
       const savedScrollTop = canvasContainer.scrollTop;
       buildScrollContainer(savedScrollTop > 0 ? savedScrollTop : undefined);
@@ -872,7 +872,7 @@ function withScrollAnchor(anchorViewportX: number, anchorViewportY: number, fn: 
  * Resets `searchQuery`, `searchHits`, `searchHitIndex`, and the info label,
  * and erases search highlights from the overlay canvas.
  */
-function clearSearch(): void {
+function clearSearch(redraw = true): void {
   searchQuery = '';
   searchHits = [];
   searchHitIndex = -1;
@@ -881,7 +881,7 @@ function clearSearch(): void {
     cancelIdleCallback(searchIdleHandle);
     searchIdleHandle = null;
   }
-  clearSearchHighlights();
+  if (redraw) drawHighlights();
 }
 
 /** Erase all search highlights from the single-page overlay canvas. */

@@ -116,3 +116,25 @@ describe('document selection lifecycle', () => {
     expect(viewer.element('search-overlay').fills).toEqual([]);
   });
 });
+
+
+describe('search overlays', () => {
+  it('clears scroll highlights when the query becomes empty', async () => {
+    viewer = createViewer();
+    await viewer.load('searchable');
+    viewer.evaluate('renderScrollPage(0); startSearch("Hello");');
+    const overlay = viewer.element('scroll-container').querySelector('[data-page="0"]')!.querySelector('.scroll-page-overlay')!;
+    expect(overlay.fills.length).toBeGreaterThan(0);
+    viewer.evaluate('startSearch("");');
+    expect(overlay.fills).toEqual([]);
+    expect(viewer.element('search-info').textContent).toBe('');
+  });
+  it('clears search safely when reloading with fewer pages', async () => {
+    viewer = createViewer();
+    await viewer.load('searchable');
+    viewer.evaluate('renderScrollPage(1); currentPage = 1; startSearch("Page");');
+    await viewer.load('simple');
+    expect(viewer.evaluate('searchQuery')).toBe('');
+    expect(viewer.evaluate('currentPage')).toBe(0);
+  });
+});
