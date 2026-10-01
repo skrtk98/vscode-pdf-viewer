@@ -35,6 +35,8 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           allow-no-subscriptions: true
       - name: Retrieve the Marketplace identity ID
+        env:
+          VERIFY_PERMISSIONS: ${{ inputs.verify_permissions }}
         run: |
           identity_id=$(az rest \
             --url 'https://app.vssps.visualstudio.com/_apis/profile/profiles/me' \
@@ -46,9 +48,14 @@ jobs:
           }
           {
             echo '### Marketplace identity'
-            echo "Add identity ID \`$identity_id\` to publisher \`skrtk98\` as a Contributor."
-            echo 'Then rerun this workflow with verify_permissions enabled.'
+            echo "Identity ID: \`$identity_id\`"
+            if [ "$VERIFY_PERMISSIONS" != true ]; then
+              echo 'Add this identity to publisher `skrtk98` as a Contributor.'
+              echo 'Then start a new run with verify_permissions enabled.'
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Verify publishing rights without uploading an extension
         if: inputs.verify_permissions
-        run: npx --no-install vsce verify-pat skrtk98 --azure-credential
+        run: |
+          npx --no-install vsce verify-pat skrtk98 --azure-credential
+          echo 'Publishing rights for `skrtk98` verified successfully through Microsoft Entra ID.' >> "$GITHUB_STEP_SUMMARY"
