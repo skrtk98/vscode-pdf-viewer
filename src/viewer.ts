@@ -1,5 +1,5 @@
 import type * as MupdfTypes from 'mupdf';
-import { toCanvasCoord, toPdfCoord, buildOutlineTree, OutlineNode } from './coords';
+import { createPageTransform, tileTransform, transformPoint, canvasPointToPage, PageTransform, Matrix, buildOutlineTree, OutlineNode } from './coords';
 
 declare global {
   interface Window {
@@ -28,13 +28,15 @@ let searchHitIndex = -1;
 let searchIdleHandle: number | null = null;
 let worker: Worker | null = null;
 let renderScale = 1.0;
+let singleTransform: PageTransform | null = null;
+const scrollTransforms = new Map<number, PageTransform>();
 
 /**
  * A single character extracted from a MuPDF structured-text walk,
- * positioned in canvas device-pixel space.
+ * positioned in MuPDF page space.
  */
 interface CharInfo {
-  /** Eight-value quad `[ulX, ulY, urX, urY, llX, llY, lrX, lrY]` in canvas device pixels. */
+  /** Eight-value quad `[ulX, ulY, urX, urY, llX, llY, lrX, lrY]` in MuPDF page coordinates. */
   quad: [number, number, number, number, number, number, number, number];
   /** The Unicode character at this position. */
   c: string;
@@ -70,8 +72,6 @@ interface PageTileInfo {
   cssRight: number;
   /** CSS pixel offset of the tile's bottom edge within the page wrapper. */
   cssBottom: number;
-  /** Render scale (`renderScale`) used when the tile was drawn. */
-  rs: number;
   /** UI `scale` value at the time the tile was drawn, used to rescale CSS dimensions on zoom. */
   renderedAtScale: number;
 }
@@ -84,7 +84,6 @@ let sidebarVisible = false;
 let thumbsSidebarVisible = false;
 let selectionPage = 0;
 let zoomDebounceTimer: ReturnType<typeof setTimeout> | null = null;
-const pageRenderScales = new Map<number, number>();
 const MAX_RENDER_SCALE = 8;
 const MAX_PIXMAP_DIM = 8192;
 const TILE_MARGIN_CSS = 600;
@@ -112,51 +111,21 @@ function getPageSText(pageIndex: number): MupdfTypes.StructuredText | null {
 }
 
 /**
- * Convert a point from MuPDF stext space to canvas device pixels.
- *
- * Stext space has its origin at the top-left (y-DOWN) because MuPDF's
- * `page_ctm` flips the y-axis; `toCanvasCoord` expects PDF user space
- * (y-UP), so the y coordinate is mirrored through `pageH` first.
- *
- * @param sx - X in stext space.
- * @param sy - Y in stext space.
- * @param pageW - Unrotated page width in PDF user-space units.
- * @param pageH - Unrotated page height in PDF user-space units.
- * @param rs - Combined render scale (renderScale).
- * @param rot - Page rotation in degrees clockwise.
- * @returns Canvas device-pixel coordinate.
- */
-function stextPtToCanvas(
-  sx: number, sy: number,
-  pageW: number, pageH: number,
-  rs: number, rot: number,
-): { x: number; y: number } {
-  return toCanvasCoord(sx, pageH - sy, pageW, pageH, rs, 1, rot);
-}
-
-/**
  * Walk the structured text of a page and return every character as a
- * {@link CharInfo} with its quad pre-converted to canvas device pixels.
+ * {@link CharInfo} with its quad in MuPDF page coordinates.
  *
  * @param pageIndex - Zero-based page index.
- * @param rs - Render scale to use for the coordinate conversion.
- * @param rot - Page rotation in degrees clockwise.
  * @returns Flat array of characters in document order.
  */
-function buildCharList(pageIndex: number, rs: number, rot: number): CharInfo[] {
+function buildCharList(pageIndex: number): CharInfo[] {
   const stext = getPageSText(pageIndex);
   if (!stext) return [];
-  const { width: pageW, height: pageH } = getPageDimensions(pageIndex);
   const chars: CharInfo[] = [];
   let bi = 0, li = 0;
   stext.walk({
     beginTextBlock() { li = 0; },
     onChar(c: string, _o: unknown, _f: unknown, _s: unknown, quad: MupdfTypes.Quad) {
-      const ul = stextPtToCanvas(quad[0], quad[1], pageW, pageH, rs, rot);
-      const ur = stextPtToCanvas(quad[2], quad[3], pageW, pageH, rs, rot);
-      const ll = stextPtToCanvas(quad[4], quad[5], pageW, pageH, rs, rot);
-      const lr = stextPtToCanvas(quad[6], quad[7], pageW, pageH, rs, rot);
-      chars.push({ quad: [ul.x, ul.y, ur.x, ur.y, ll.x, ll.y, lr.x, lr.y], c, blockIdx: bi, lineIdx: li });
+      chars.push({ quad: [...quad], c, blockIdx: bi, lineIdx: li });
     },
     endLine() { li++; },
     endTextBlock() { bi++; },
@@ -170,8 +139,8 @@ function buildCharList(pageIndex: number, rs: number, rot: number): CharInfo[] {
  * Uses squared Euclidean distance so no `Math.sqrt` is needed.
  *
  * @param chars - Character list produced by {@link buildCharList}.
- * @param devX - X position in canvas device pixels.
- * @param devY - Y position in canvas device pixels.
+ * @param devX - X position in MuPDF page coordinates.
+ * @param devY - Y position in MuPDF page coordinates.
  * @returns Index into `chars`, or `-1` if the array is empty.
  */
 function findClosestChar(chars: CharInfo[], devX: number, devY: number): number {
@@ -195,7 +164,7 @@ function findClosestChar(chars: CharInfo[], devX: number, devY: number): number 
  * @param chars - Character list produced by {@link buildCharList}.
  * @param startIdx - Index of the selection anchor character.
  * @param endIdx - Index of the selection focus character.
- * @returns Array of eight-value quad arrays in canvas device pixels.
+ * @returns Array of eight-value quad arrays in MuPDF page coordinates.
  */
 function computeSelectionQuads(chars: CharInfo[], startIdx: number, endIdx: number): number[][] {
   const [lo, hi] = startIdx <= endIdx ? [startIdx, endIdx] : [endIdx, startIdx];
@@ -380,13 +349,9 @@ function getPageDimensions(pageIndex: number): { width: number; height: number }
   if (!doc) return { width: 612, height: 792 };
   const page = doc.loadPage(pageIndex);
   const b = page.getBounds();
-  const w = b[2] - b[0];
-  const h = b[3] - b[1];
   page.destroy();
-  const rot = getRotation(pageIndex);
-  const dims = rot === 90 || rot === 270
-    ? { width: h, height: w }
-    : { width: w, height: h };
+  const geometry = createPageTransform(mupdf!, b, 1, getRotation(pageIndex));
+  const dims = { width: geometry.width, height: geometry.height };
   pageDimensionsCache.set(pageIndex, dims);
   return dims;
 }
@@ -403,20 +368,16 @@ function renderPage(): void {
 
   const page = doc.loadPage(currentPage);
   const b = page.getBounds();
-  const pageW = b[2] - b[0];
-  const pageH = b[3] - b[1];
-  const rot = getRotation();
-
-  const displayW = rot === 90 || rot === 270 ? pageH : pageW;
-  const displayH = rot === 90 || rot === 270 ? pageW : pageH;
+  const { width: displayW, height: displayH } = getPageDimensions(currentPage);
   renderScale = clampRenderScale(computeRenderScale(), displayW, displayH);
-  const rotMatrix = mupdf.Matrix.rotate(rot);
-  const matrix = mupdf.Matrix.concat(rotMatrix, mupdf.Matrix.scale(renderScale, renderScale));
+  const geometry = createPageTransform(mupdf, b, renderScale, getRotation());
+  const matrix = geometry.matrix;
 
   const pixmap = page.toPixmap(matrix, mupdf.ColorSpace.DeviceRGB, false);
   const rgb = pixmap.getPixels();
   const pw = pixmap.getWidth();
   const ph = pixmap.getHeight();
+  singleTransform = tileTransform(mupdf, geometry, pixmap.getBounds() as MupdfTypes.Rect);
 
   const rgba = new Uint8ClampedArray(pw * ph * 4);
   for (let i = 0, j = 0; i < rgb.length; i += 3, j += 4) {
@@ -470,8 +431,6 @@ function drawHighlights(): void {
  */
 function drawSearchHighlights(): void {
   if (!searchQuery) return;
-  const { width: pageW, height: pageH } = getPageDimensions(currentPage);
-  const rot = getRotation();
   const hits = searchHits[currentPage];
   if (!hits?.length) return;
 
@@ -481,7 +440,7 @@ function drawSearchHighlights(): void {
       ? 'rgba(255, 120, 0, 0.45)'
       : 'rgba(255, 200, 0, 0.30)';
     for (const quad of hits[i]) {
-      fillQuad(quad, pageW, pageH, rot);
+      if (singleTransform) fillQuad(overlayCtx, quad, singleTransform.matrix);
     }
   }
 }
@@ -503,58 +462,19 @@ function getPageHitIndex(): number {
   return local;
 }
 
-/**
- * Fill a single MuPDF quad on the single-page overlay canvas using the current fill style.
- *
- * Coordinates are in PDF user space and are converted to canvas device pixels
- * via {@link toCanvasCoord}.
- *
- * @param quad - Eight-value MuPDF quad `[ulX, ulY, urX, urY, llX, llY, lrX, lrY]` in PDF user space.
- * @param pageW - Unrotated page width in PDF user-space units.
- * @param pageH - Unrotated page height in PDF user-space units.
- * @param rot - Page rotation in degrees clockwise.
- */
-function fillQuad(quad: MupdfTypes.Quad, pageW: number, pageH: number, rot: number): void {
-  const ul = stextPtToCanvas(quad[0], quad[1], pageW, pageH, renderScale, rot);
-  const ur = stextPtToCanvas(quad[2], quad[3], pageW, pageH, renderScale, rot);
-  const ll = stextPtToCanvas(quad[4], quad[5], pageW, pageH, renderScale, rot);
-  const lr = stextPtToCanvas(quad[6], quad[7], pageW, pageH, renderScale, rot);
-  overlayCtx.beginPath();
-  overlayCtx.moveTo(ul.x, ul.y);
-  overlayCtx.lineTo(ur.x, ur.y);
-  overlayCtx.lineTo(lr.x, lr.y);
-  overlayCtx.lineTo(ll.x, ll.y);
-  overlayCtx.closePath();
-  overlayCtx.fill();
+/** Paint a MuPDF page-space quad through the same transform used to render. */
+function fillQuad(context: CanvasRenderingContext2D, quad: readonly number[], matrix: Matrix): void {
+  const points = [0, 2, 6, 4].map(i => transformPoint(matrix, quad[i], quad[i + 1]));
+  context.beginPath();
+  context.moveTo(points[0].x, points[0].y);
+  for (const point of points.slice(1)) context.lineTo(point.x, point.y);
+  context.closePath();
+  context.fill();
 }
 
-/**
- * Fill an array of pre-computed canvas-space quads onto a 2D context.
- *
- * Each quad is an eight-value array `[ulX, ulY, urX, urY, llX, llY, lrX, lrY]`
- * in canvas device pixels.  `tileAdjX`/`tileAdjY` shift all coordinates to
- * account for the tile's position within the page wrapper.
- *
- * @param ctx2d - The 2D rendering context to draw into.
- * @param quads - Array of eight-value quad arrays in canvas device pixels.
- * @param tileAdjX - Horizontal tile offset in canvas device pixels.
- * @param tileAdjY - Vertical tile offset in canvas device pixels.
- */
-function drawCanvasQuads(
-  ctx2d: CanvasRenderingContext2D,
-  quads: number[][],
-  tileAdjX = 0, tileAdjY = 0,
-): void {
-  ctx2d.fillStyle = 'rgba(0, 120, 215, 0.25)';
-  for (const q of quads) {
-    ctx2d.beginPath();
-    ctx2d.moveTo(q[0] - tileAdjX, q[1] - tileAdjY);
-    ctx2d.lineTo(q[2] - tileAdjX, q[3] - tileAdjY);
-    ctx2d.lineTo(q[6] - tileAdjX, q[7] - tileAdjY);
-    ctx2d.lineTo(q[4] - tileAdjX, q[5] - tileAdjY);
-    ctx2d.closePath();
-    ctx2d.fill();
-  }
+function drawCanvasQuads(context: CanvasRenderingContext2D, quads: number[][], matrix: Matrix): void {
+  context.fillStyle = 'rgba(0, 120, 215, 0.25)';
+  for (const quad of quads) fillQuad(context, quad, matrix);
 }
 
 /**
@@ -565,9 +485,9 @@ function drawCanvasQuads(
  */
 function drawSelectionHighlight(): void {
   if (selectionStartIdx < 0 || selectionEndIdx < 0 || selectionStartIdx === selectionEndIdx) return;
-  const chars = buildCharList(currentPage, renderScale, getRotation());
+  const chars = buildCharList(currentPage);
   const quads = computeSelectionQuads(chars, selectionStartIdx, selectionEndIdx);
-  drawCanvasQuads(overlayCtx, quads);
+  if (singleTransform) drawCanvasQuads(overlayCtx, quads, singleTransform.matrix);
 }
 
 /**
@@ -1074,17 +994,17 @@ function navigateSearch(dir: 1 | -1): void {
   }
 }
 
-/**
- * Convert a CSS-pixel position on the single-page canvas to PDF user-space.
- *
- * @param cssX - X in CSS pixels relative to the canvas element.
- * @param cssY - Y in CSS pixels relative to the canvas element.
- * @returns A MuPDF `Point` `[x, y]` in PDF user space.
- */
-function canvasToPdf(cssX: number, cssY: number): MupdfTypes.Point {
-  const { width: w, height: h } = getPageDimensions(currentPage);
-  const pt = toPdfCoord(cssX * renderScale / scale, cssY * renderScale / scale, w, h, renderScale, 1, getRotation());
-  return [pt.x, pt.y];
+/** Return pointer coordinates in MuPDF page space for either view mode. */
+function pointerToPage(pageIndex: number, event: MouseEvent): { x: number; y: number } | null {
+  const target = viewMode === 'single' ? canvas : scrollContainer
+    .querySelector<HTMLElement>(`[data-page="${pageIndex}"]`)
+    ?.querySelector<HTMLCanvasElement>('.scroll-page-canvas');
+  const geometry = viewMode === 'single' ? singleTransform : scrollTransforms.get(pageIndex);
+  if (!target || !geometry) return null;
+  const rect = target.getBoundingClientRect();
+  if (!rect.width || !rect.height) return null;
+  return canvasPointToPage(geometry, event.clientX - rect.left, event.clientY - rect.top,
+    rect.width, rect.height, target.width, target.height);
 }
 
 canvas.addEventListener('mousedown', (e) => {
@@ -1092,21 +1012,19 @@ canvas.addEventListener('mousedown', (e) => {
   selectionPage = currentPage;
   selectionStartIdx = -1;
   selectionEndIdx = -1;
-  const r = canvas.getBoundingClientRect();
-  const devX = (e.clientX - r.left) * renderScale / scale;
-  const devY = (e.clientY - r.top)  * renderScale / scale;
-  selectionPageChars = buildCharList(currentPage, renderScale, getRotation());
-  selectionStartIdx = findClosestChar(selectionPageChars, devX, devY);
+  const point = pointerToPage(currentPage, e);
+  if (!point) return;
+  selectionPageChars = buildCharList(currentPage);
+  selectionStartIdx = findClosestChar(selectionPageChars, point.x, point.y);
   selectionEndIdx = selectionStartIdx;
   isDragging = true;
 });
 
 canvas.addEventListener('mousemove', (e) => {
   if (!isDragging) return;
-  const r = canvas.getBoundingClientRect();
-  const devX = (e.clientX - r.left) * renderScale / scale;
-  const devY = (e.clientY - r.top)  * renderScale / scale;
-  selectionEndIdx = findClosestChar(selectionPageChars, devX, devY);
+  const point = pointerToPage(currentPage, e);
+  if (!point) return;
+  selectionEndIdx = findClosestChar(selectionPageChars, point.x, point.y);
   if (rafHandle !== null) return;
   rafHandle = requestAnimationFrame(() => {
     rafHandle = null;
@@ -1138,13 +1056,10 @@ scrollContainer.addEventListener('mousedown', (e) => {
   selectionEndIdx = -1;
   selectionPageChars = [];
   if (prevPage !== pageIndex) refreshScrollPageOverlay(prevPage);
-  const r = wrapper.getBoundingClientRect();
-  const rs = pageRenderScales.get(pageIndex) ?? computeRenderScale();
-  const rot = getRotation(pageIndex);
-  const devX = (e.clientX - r.left) * rs / scale;
-  const devY = (e.clientY - r.top)  * rs / scale;
-  selectionPageChars = buildCharList(pageIndex, rs, rot);
-  selectionStartIdx = findClosestChar(selectionPageChars, devX, devY);
+  const point = pointerToPage(pageIndex, e);
+  if (!point) return;
+  selectionPageChars = buildCharList(pageIndex);
+  selectionStartIdx = findClosestChar(selectionPageChars, point.x, point.y);
   selectionEndIdx = selectionStartIdx;
   isDragging = true;
 });
@@ -1153,11 +1068,9 @@ scrollContainer.addEventListener('mousemove', (e) => {
   if (!isDragging || viewMode !== 'scroll') return;
   const wrapper = scrollContainer.querySelector<HTMLElement>(`[data-page="${selectionPage}"]`);
   if (!wrapper) return;
-  const r = wrapper.getBoundingClientRect();
-  const rs = pageRenderScales.get(selectionPage) ?? computeRenderScale();
-  const devX = (e.clientX - r.left) * rs / scale;
-  const devY = (e.clientY - r.top)  * rs / scale;
-  selectionEndIdx = findClosestChar(selectionPageChars, devX, devY);
+  const point = pointerToPage(selectionPage, e);
+  if (!point) return;
+  selectionEndIdx = findClosestChar(selectionPageChars, point.x, point.y);
   if (rafHandle !== null) return;
   rafHandle = requestAnimationFrame(() => {
     rafHandle = null;
@@ -1234,26 +1147,6 @@ function extractImagePngAtPoint(pageIndex: number, stextX: number, stextY: numbe
   });
   stext.destroy();
   return result;
-}
-
-/**
- * Convert a wrapper-relative CSS position to stext space for a scroll-mode page.
- *
- * Converts CSS pixels → canvas device pixels via the page render scale, then
- * calls {@link toPdfCoord} (PDF user space, y-UP), and finally mirrors the
- * y-axis to produce stext space (y-DOWN).
- *
- * @param cssX - X in CSS pixels relative to the page wrapper.
- * @param cssY - Y in CSS pixels relative to the page wrapper.
- * @param pageIndex - Zero-based page index.
- * @param rs - Render scale in effect for the page.
- * @returns `[stextX, stextY]` in stext coordinate space.
- */
-function cssToStext(cssX: number, cssY: number, pageIndex: number, rs: number): [number, number] {
-  const { width: pageW, height: pageH } = getPageDimensions(pageIndex);
-  const rot = getRotation(pageIndex);
-  const pt = toPdfCoord(cssX * rs / scale, cssY * rs / scale, pageW, pageH, rs, 1, rot);
-  return [pt.x, pageH - pt.y];
 }
 
 /**
@@ -1346,8 +1239,8 @@ function handleContextMenu(e: MouseEvent, pageIndex: number, stextX: number, ste
  * then redraws the appropriate overlay.
  *
  * @param pageIndex - Zero-based page index where the double-click occurred.
- * @param devX - Click X in canvas device pixels.
- * @param devY - Click Y in canvas device pixels.
+ * @param devX - Click X in MuPDF page coordinates.
+ * @param devY - Click Y in MuPDF page coordinates.
  * @param isScrollMode - `true` when the event originated from the scroll container.
  */
 async function handleDoubleClick(
@@ -1355,9 +1248,7 @@ async function handleDoubleClick(
   devX: number, devY: number,
   isScrollMode: boolean,
 ): Promise<void> {
-  const rs = isScrollMode ? (pageRenderScales.get(pageIndex) ?? computeRenderScale()) : renderScale;
-  const rot = getRotation(pageIndex);
-  const chars = buildCharList(pageIndex, rs, rot);
+  const chars = buildCharList(pageIndex);
   const idx = findClosestChar(chars, devX, devY);
   if (idx < 0) return;
   const [lo, hi] = expandWordAtChar(chars, idx);
@@ -1385,21 +1276,16 @@ canvas.addEventListener('contextmenu', (e) => {
   }
   if (!doc) return;
   e.preventDefault();
-  const r = canvas.getBoundingClientRect();
-  const cssX = e.clientX - r.left;
-  const cssY = e.clientY - r.top;
-  const [sx, sy] = cssToStext(cssX, cssY, currentPage, renderScale);
-  handleContextMenu(e, currentPage, sx, sy);
+  const point = pointerToPage(currentPage, e);
+  if (!point) return;
+  handleContextMenu(e, currentPage, point.x, point.y);
 });
 
 canvas.addEventListener('dblclick', async (e) => {
   if (!doc) return;
-  const r = canvas.getBoundingClientRect();
-  const cssX = e.clientX - r.left;
-  const cssY = e.clientY - r.top;
-  const devX = cssX * renderScale / scale;
-  const devY = cssY * renderScale / scale;
-  await handleDoubleClick(currentPage, devX, devY, false);
+  const point = pointerToPage(currentPage, e);
+  if (!point) return;
+  await handleDoubleClick(currentPage, point.x, point.y, false);
 });
 
 scrollContainer.addEventListener('contextmenu', (e) => {
@@ -1412,12 +1298,9 @@ scrollContainer.addEventListener('contextmenu', (e) => {
   const wrapper = (e.target as HTMLElement).closest('.scroll-page') as HTMLElement | null;
   if (!wrapper) return;
   const pageIndex = parseInt(wrapper.dataset.page!);
-  const r = wrapper.getBoundingClientRect();
-  const cssX = e.clientX - r.left;
-  const cssY = e.clientY - r.top;
-  const rs = pageRenderScales.get(pageIndex) ?? computeRenderScale();
-  const [sx, sy] = cssToStext(cssX, cssY, pageIndex, rs);
-  handleContextMenu(e, pageIndex, sx, sy);
+  const point = pointerToPage(pageIndex, e);
+  if (!point) return;
+  handleContextMenu(e, pageIndex, point.x, point.y);
 });
 
 scrollContainer.addEventListener('dblclick', async (e) => {
@@ -1425,19 +1308,15 @@ scrollContainer.addEventListener('dblclick', async (e) => {
   const wrapper = (e.target as HTMLElement).closest('.scroll-page') as HTMLElement | null;
   if (!wrapper) return;
   const pageIndex = parseInt(wrapper.dataset.page!);
-  const r = wrapper.getBoundingClientRect();
-  const cssX = e.clientX - r.left;
-  const cssY = e.clientY - r.top;
-  const rs = pageRenderScales.get(pageIndex) ?? computeRenderScale();
-  const devX = cssX * rs / scale;
-  const devY = cssY * rs / scale;
-  await handleDoubleClick(pageIndex, devX, devY, true);
+  const point = pointerToPage(pageIndex, e);
+  if (!point) return;
+  await handleDoubleClick(pageIndex, point.x, point.y, true);
 });
 
 /**
  * Resolve a left-click on the single-page canvas as a link activation.
  *
- * Converts the click position to PDF user space and tests it against every
+ * Converts the click position to MuPDF page space and tests it against every
  * link on the current page.  External URIs are opened in the default browser
  * via the host; internal destinations navigate to the target page.
  *
@@ -1445,11 +1324,8 @@ scrollContainer.addEventListener('dblclick', async (e) => {
  */
 function handleLinkClick(e: MouseEvent): void {
   if (!doc) return;
-  const r = canvas.getBoundingClientRect();
-  const cx = (e.clientX - r.left) * renderScale / scale;
-  const cy = (e.clientY - r.top) * renderScale / scale;
-  const { width: pw, height: ph } = getPageDimensions(currentPage);
-  const pt = toPdfCoord(cx, cy, pw, ph, renderScale, 1, getRotation());
+  const pt = pointerToPage(currentPage, e);
+  if (!pt) return;
 
   const page = doc.loadPage(currentPage);
   const links = page.getLinks();
@@ -1821,6 +1697,7 @@ function setViewMode(mode: ViewMode): void {
  */
 function buildScrollContainer(restoreScrollTop?: number): void {
   scrollContainer.innerHTML = '';
+  scrollTransforms.clear();
   renderedScrollPages.clear();
   pageTiles.clear();
   if (scrollObserver) { scrollObserver.disconnect(); scrollObserver = null; }
@@ -1893,11 +1770,7 @@ function renderScrollPage(pageIndex: number): void {
 
   const page = doc.loadPage(pageIndex);
   const b = page.getBounds();
-  const pageW = b[2] - b[0];
-  const pageH = b[3] - b[1];
-  const rot = getRotation(pageIndex);
-  const displayW = rot === 90 || rot === 270 ? pageH : pageW;
-  const displayH = rot === 90 || rot === 270 ? pageW : pageH;
+  const { width: displayW, height: displayH } = getPageDimensions(pageIndex);
 
   const tileCSS = getScrollPageTileCSS(pageIndex, displayW, displayH);
   const tileCssW = tileCSS.right  - tileCSS.left;
@@ -1909,20 +1782,20 @@ function renderScrollPage(pageIndex: number): void {
     (MAX_PIXMAP_DIM / tileCssW) * scale,
     (MAX_PIXMAP_DIM / tileCssH) * scale,
   );
-  pageRenderScales.set(pageIndex, rs);
 
-  const matrix = mupdf.Matrix.concat(mupdf.Matrix.rotate(rot), mupdf.Matrix.scale(rs, rs));
+  const geometry = createPageTransform(mupdf, b, rs, getRotation(pageIndex));
+  const matrix = geometry.matrix;
 
-  const fullDevBounds = mupdf.Rect.transform([b[0], b[1], b[2], b[3]] as MupdfTypes.Rect, matrix);
   const devScale = rs / scale;
   const tileDevBbox: MupdfTypes.Rect = [
-    Math.floor(fullDevBounds[0] + tileCSS.left   * devScale),
-    Math.floor(fullDevBounds[1] + tileCSS.top    * devScale),
-    Math.ceil( fullDevBounds[0] + tileCSS.right  * devScale),
-    Math.ceil( fullDevBounds[1] + tileCSS.bottom * devScale),
+    Math.floor(tileCSS.left   * devScale),
+    Math.floor(tileCSS.top    * devScale),
+    Math.ceil( tileCSS.right  * devScale),
+    Math.ceil( tileCSS.bottom * devScale),
   ];
 
   const pixmap = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, tileDevBbox, false);
+  scrollTransforms.set(pageIndex, tileTransform(mupdf, geometry, tileDevBbox));
   pixmap.clear(255);
   const device = new mupdf.DrawDevice(matrix, pixmap);
   page.runPageContents(device, mupdf.Matrix.identity);
@@ -1967,7 +1840,6 @@ function renderScrollPage(pageIndex: number): void {
   pageTiles.set(pageIndex, {
     cssLeft: tileCSS.left, cssTop: tileCSS.top,
     cssRight: tileCSS.right, cssBottom: tileCSS.bottom,
-    rs,
     renderedAtScale: scale,
   });
   renderedScrollPages.add(pageIndex);
@@ -1977,10 +1849,7 @@ function renderScrollPage(pageIndex: number): void {
 /**
  * Redraw the search and selection highlights on a scroll-mode page's overlay canvas.
  *
- * Applies the tile offset (from {@link pageTiles}) so highlight coordinates
- * align with the clipped tile canvas.  Rebuilds the char list at the current
- * render scale rather than using a cached one so that rotation changes are
- * reflected immediately.
+ * Uses the rendered tile transform for both search and selection quads.
  *
  * @param pageIndex - Zero-based page index whose overlay to refresh.
  */
@@ -1991,13 +1860,8 @@ function refreshScrollPageOverlay(pageIndex: number): void {
   const ctx2d = oc.getContext('2d')!;
   ctx2d.clearRect(0, 0, oc.width, oc.height);
 
-  const { width: pageW, height: pageH } = getPageDimensions(pageIndex);
-  const rot = getRotation(pageIndex);
-  const rs = pageRenderScales.get(pageIndex) ?? computeRenderScale();
-
-  const tileInfo = pageTiles.get(pageIndex);
-  const tileAdjX = tileInfo ? tileInfo.cssLeft * rs / scale : 0;
-  const tileAdjY = tileInfo ? tileInfo.cssTop  * rs / scale : 0;
+  const geometry = scrollTransforms.get(pageIndex);
+  if (!geometry) return;
 
   if (searchQuery) {
     const hits = searchHits[pageIndex];
@@ -2008,49 +1872,17 @@ function refreshScrollPageOverlay(pageIndex: number): void {
         const isActive = (globalBase + i) === searchHitIndex;
         ctx2d.fillStyle = isActive ? 'rgba(255,120,0,0.45)' : 'rgba(255,200,0,0.30)';
         for (const quad of hits[i]) {
-          const ul = stextPtToCanvas(quad[0], quad[1], pageW, pageH, rs, rot);
-          const ur = stextPtToCanvas(quad[2], quad[3], pageW, pageH, rs, rot);
-          const ll = stextPtToCanvas(quad[4], quad[5], pageW, pageH, rs, rot);
-          const lr = stextPtToCanvas(quad[6], quad[7], pageW, pageH, rs, rot);
-          ctx2d.beginPath();
-          ctx2d.moveTo(ul.x - tileAdjX, ul.y - tileAdjY);
-          ctx2d.lineTo(ur.x - tileAdjX, ur.y - tileAdjY);
-          ctx2d.lineTo(lr.x - tileAdjX, lr.y - tileAdjY);
-          ctx2d.lineTo(ll.x - tileAdjX, ll.y - tileAdjY);
-          ctx2d.closePath();
-          ctx2d.fill();
+          fillQuad(ctx2d, quad, geometry.matrix);
         }
       }
     }
   }
 
   if (pageIndex === selectionPage && selectionStartIdx >= 0 && selectionEndIdx >= 0 && selectionStartIdx !== selectionEndIdx) {
-    const chars = buildCharList(pageIndex, rs, rot);
+    const chars = buildCharList(pageIndex);
     const quads = computeSelectionQuads(chars, selectionStartIdx, selectionEndIdx);
-    drawCanvasQuads(ctx2d, quads, tileAdjX, tileAdjY);
+    drawCanvasQuads(ctx2d, quads, geometry.matrix);
   }
-}
-
-/**
- * Convert a wrapper-relative CSS position on a scroll-mode page to PDF user space.
- *
- * Accounts for the tile offset stored in {@link pageTiles} so that the result
- * is correct even when only a sub-region of the page has been rendered.
- *
- * @param pageIndex - Zero-based page index.
- * @param cssX - X in CSS pixels relative to the page wrapper.
- * @param cssY - Y in CSS pixels relative to the page wrapper.
- * @returns A MuPDF `Point` `[x, y]` in PDF user space.
- */
-function scrollPageToPdf(pageIndex: number, cssX: number, cssY: number): MupdfTypes.Point {
-  const { width: w, height: h } = getPageDimensions(pageIndex);
-  const rot = getRotation(pageIndex);
-  const rs = pageRenderScales.get(pageIndex) ?? computeRenderScale();
-  const tileInfo = pageTiles.get(pageIndex);
-  const tileAdjX = tileInfo ? tileInfo.cssLeft * rs / scale : 0;
-  const tileAdjY = tileInfo ? tileInfo.cssTop  * rs / scale : 0;
-  const pt = toPdfCoord(cssX * rs / scale + tileAdjX, cssY * rs / scale + tileAdjY, w, h, rs, 1, rot);
-  return [pt.x, pt.y];
 }
 
 /**
@@ -2068,10 +1900,7 @@ function checkAndRetileOnScroll(): void {
     if (!tileInfo) continue;
     const wrapper = scrollContainer.querySelector<HTMLElement>(`[data-page="${pageIndex}"]`);
     if (!wrapper) continue;
-    const { width: dW, height: dH } = getPageDimensions(pageIndex);
-    const rot = getRotation(pageIndex);
-    const displayW = rot === 90 || rot === 270 ? dH : dW;
-    const displayH = rot === 90 || rot === 270 ? dW : dH;
+    const { width: displayW, height: displayH } = getPageDimensions(pageIndex);
     const containerRect = canvasContainer.getBoundingClientRect();
     const wrapperRect   = wrapper.getBoundingClientRect();
     const visLeft   = Math.max(0,             containerRect.left   - wrapperRect.left);

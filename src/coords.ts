@@ -20,105 +20,51 @@ export interface OutlineItem {
   page?: number;
 }
 
-/**
- * Convert a PDF user-space coordinate to a canvas device-pixel coordinate.
- *
- * PDF space: origin at bottom-left, y-axis pointing up.
- * Canvas space: origin at top-left, y-axis pointing down.
- *
- * Pass `renderScale` (= `scale * dpr * renderResolution/96`) as `scale` and `1` as `dpr`
- * so the result maps directly to canvas physical pixels.
- * Rotation is applied before the y-flip; supported values: 0, 90, 180, 270 (degrees CW).
- *
- * @param pdfX - X coordinate in PDF user space.
- * @param pdfY - Y coordinate in PDF user space.
- * @param pageWidth - Unrotated page width in PDF user-space units.
- * @param pageHeight - Unrotated page height in PDF user-space units.
- * @param scale - Combined render scale (renderScale).
- * @param dpr - Device pixel ratio (pass 1 when scale already includes dpr).
- * @param rotation - Page rotation in degrees clockwise (0 | 90 | 180 | 270).
- * @returns Canvas-space point in device pixels.
- */
-export function toCanvasCoord(
-  pdfX: number,
-  pdfY: number,
-  pageWidth: number,
-  pageHeight: number,
-  scale: number,
-  dpr: number,
-  rotation: number
-): Point {
-  const s = scale * dpr;
-  let x = pdfX;
-  let y = pdfY;
-  let w = pageWidth;
-  let h = pageHeight;
+/** MuPDF page coordinates are the common space for text, links and images. */
+export type Matrix = import('mupdf').Matrix;
+export type Rect = import('mupdf').Rect;
+type GeometryEngine = Pick<typeof import('mupdf'), 'Matrix' | 'Rect'>;
 
-  const r = ((rotation % 360) + 360) % 360;
-  if (r === 90) {
-    [x, y] = [h - y, x];
-    [w, h] = [h, w];
-  } else if (r === 180) {
-    x = w - x;
-    y = h - y;
-  } else if (r === 270) {
-    [x, y] = [y, w - x];
-    [w, h] = [h, w];
-  }
+export interface PageTransform {
+  matrix: Matrix;
+  inverse: Matrix;
+  width: number;
+  height: number;
+}
 
+export function transformPoint(matrix: Matrix, x: number, y: number): Point {
   return {
-    x: x * s,
-    y: (h - y) * s,
+    x: x * matrix[0] + y * matrix[2] + matrix[4],
+    y: x * matrix[1] + y * matrix[3] + matrix[5],
   };
 }
 
-/**
- * Convert a canvas device-pixel coordinate back to PDF user-space.
- *
- * Exact inverse of {@link toCanvasCoord}.
- *
- * @param canvasX - X coordinate in canvas device pixels.
- * @param canvasY - Y coordinate in canvas device pixels.
- * @param pageWidth - Unrotated page width in PDF user-space units.
- * @param pageHeight - Unrotated page height in PDF user-space units.
- * @param scale - Combined render scale (renderScale).
- * @param dpr - Device pixel ratio (pass 1 when scale already includes dpr).
- * @param rotation - Page rotation in degrees clockwise (0 | 90 | 180 | 270).
- * @returns PDF user-space point.
- */
-export function toPdfCoord(
-  canvasX: number,
-  canvasY: number,
-  pageWidth: number,
-  pageHeight: number,
-  scale: number,
-  dpr: number,
-  rotation: number
+/** Compose rotation, scale and origin translation using MuPDF's matrix order. */
+export function createPageTransform(
+  engine: GeometryEngine, bounds: Rect, scale: number, rotation: number,
+): PageTransform {
+  // Eliminate trig roundoff at right angles without branching on rotation.
+  const rotationMatrix = engine.Matrix.rotate(rotation).map(
+    value => Math.abs(value) < 1e-12 ? 0 : value,
+  ) as Matrix;
+  const scaled = engine.Matrix.concat(rotationMatrix, engine.Matrix.scale(scale, scale));
+  const box = engine.Rect.transform(bounds, scaled);
+  const matrix = engine.Matrix.concat(scaled, engine.Matrix.translate(-box[0], -box[1]));
+  return { matrix, inverse: engine.Matrix.invert(matrix), width: box[2] - box[0], height: box[3] - box[1] };
+}
+
+/** Convert the page transform to the actual pixmap's local pixel coordinates. */
+export function tileTransform(engine: GeometryEngine, page: PageTransform, box: Rect): PageTransform {
+  const matrix = engine.Matrix.concat(page.matrix, engine.Matrix.translate(-box[0], -box[1]));
+  return { matrix, inverse: engine.Matrix.invert(matrix), width: box[2] - box[0], height: box[3] - box[1] };
+}
+
+/** Map a pointer through the rendered canvas, including CSS resizing and tiling. */
+export function canvasPointToPage(
+  transform: PageTransform, x: number, y: number,
+  cssWidth: number, cssHeight: number, pixelWidth: number, pixelHeight: number,
 ): Point {
-  const s = scale * dpr;
-  const r = ((rotation % 360) + 360) % 360;
-
-  let w = pageWidth;
-  let h = pageHeight;
-  if (r === 90 || r === 270) {
-    [w, h] = [h, w];
-  }
-
-  let x = canvasX / s;
-  let y = h - canvasY / s;
-
-  if (r === 90) {
-    const origH = pageHeight;
-    [x, y] = [y, origH - x];
-  } else if (r === 180) {
-    x = pageWidth - x;
-    y = pageHeight - y;
-  } else if (r === 270) {
-    const origW = pageWidth;
-    [x, y] = [origW - y, x];
-  }
-
-  return { x, y };
+  return transformPoint(transform.inverse, x * pixelWidth / cssWidth, y * pixelHeight / cssHeight);
 }
 
 /**

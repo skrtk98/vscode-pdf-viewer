@@ -1,65 +1,59 @@
 import { describe, it, expect } from 'vitest';
-import { toCanvasCoord, toPdfCoord, buildOutlineTree, OutlineItem } from '../src/coords';
+import mupdf from 'mupdf';
+import { readFileSync } from 'node:fs';
+import { createPageTransform, tileTransform, transformPoint, canvasPointToPage, buildOutlineTree, OutlineItem } from '../src/coords';
 
-describe('toCanvasCoord', () => {
-  it('TC-UNIT-01: rotation=0', () => {
-    const result = toCanvasCoord(100, 200, 600, 800, 1.0, 1.0, 0);
-    expect(result).toEqual({ x: 100, y: 600 });
-  });
-
-  it('TC-UNIT-02: rotation=90', () => {
-    const result = toCanvasCoord(100, 200, 600, 800, 1.0, 1.0, 90);
-    expect(result).toEqual({ x: 600, y: 500 });
-  });
-
-  it('TC-UNIT-04A: scale=1.0, dpr=1.0', () => {
-    const result = toCanvasCoord(100, 100, 600, 400, 1.0, 1.0, 0);
-    expect(result).toEqual({ x: 100, y: 300 });
-  });
-
-  it('TC-UNIT-04B: scale=2.0, dpr=2.0 gives 4x', () => {
-    const result = toCanvasCoord(100, 100, 600, 400, 2.0, 2.0, 0);
-    expect(result).toEqual({ x: 400, y: 1200 });
-  });
-});
-
-describe('toPdfCoord', () => {
-  it('TC-UNIT-03: inverse transform', () => {
-    const result = toPdfCoord(450, 2100, 600, 1000, 1.5, 2.0, 0);
-    expect(result.x).toBeCloseTo(150, 5);
-    expect(result.y).toBeCloseTo(300, 5);
-  });
-
-  it('roundtrip rotation=0', () => {
-    const pdfX = 120, pdfY = 340;
-    const canvas = toCanvasCoord(pdfX, pdfY, 600, 800, 1.5, 2.0, 0);
-    const back = toPdfCoord(canvas.x, canvas.y, 600, 800, 1.5, 2.0, 0);
-    expect(back.x).toBeCloseTo(pdfX, 5);
-    expect(back.y).toBeCloseTo(pdfY, 5);
-  });
-
-  it('roundtrip rotation=90', () => {
-    const pdfX = 120, pdfY = 340;
-    const canvas = toCanvasCoord(pdfX, pdfY, 600, 800, 1.0, 1.0, 90);
-    const back = toPdfCoord(canvas.x, canvas.y, 600, 800, 1.0, 1.0, 90);
-    expect(back.x).toBeCloseTo(pdfX, 5);
-    expect(back.y).toBeCloseTo(pdfY, 5);
-  });
-
-  it('roundtrip rotation=180', () => {
-    const pdfX = 120, pdfY = 340;
-    const canvas = toCanvasCoord(pdfX, pdfY, 600, 800, 1.0, 1.0, 180);
-    const back = toPdfCoord(canvas.x, canvas.y, 600, 800, 1.0, 1.0, 180);
-    expect(back.x).toBeCloseTo(pdfX, 5);
-    expect(back.y).toBeCloseTo(pdfY, 5);
-  });
-
-  it('roundtrip rotation=270', () => {
-    const pdfX = 120, pdfY = 340;
-    const canvas = toCanvasCoord(pdfX, pdfY, 600, 800, 1.0, 1.0, 270);
-    const back = toPdfCoord(canvas.x, canvas.y, 600, 800, 1.0, 1.0, 270);
-    expect(back.x).toBeCloseTo(pdfX, 5);
-    expect(back.y).toBeCloseTo(pdfY, 5);
+// Verify against MuPDF's raster output, not merely two mutually inverse helpers.
+describe('page transforms', () => {
+  for (const rotation of [0, 90, 180, 270]) {
+    for (const shape of ['portrait', 'landscape', 'cropped', 'intrinsic-rotation']) {
+      it(`aligns search quads with actual glyph pixels: ${shape}, ${rotation} degrees`, () => {
+        const doc = mupdf.Document.openDocument(readFileSync('test/fixtures/searchable.pdf'), 'application/pdf') as mupdf.PDFDocument;
+        const object = doc.findPage(0);
+        if (shape === 'landscape') object.put('MediaBox', [0, 0, 900, 792]);
+        if (shape === 'cropped') object.put('CropBox', [30, 20, 580, 770]);
+        if (shape === 'intrinsic-rotation') object.put('Rotate', 90);
+        const page = doc.loadPage(0);
+        const geometry = createPageTransform(mupdf, page.getBounds(), 1.75, rotation);
+        const pixmap = page.toPixmap(geometry.matrix, mupdf.ColorSpace.DeviceRGB, false);
+        const quad = page.search('Hello')[0][0];
+        const points = [0, 2, 4, 6].map(i => transformPoint(geometry.matrix, quad[i], quad[i + 1]));
+        const xs = points.map(p => p.x), ys = points.map(p => p.y);
+        let ink = 0;
+        const pixels = pixmap.getPixels();
+        for (let y = Math.ceil(Math.min(...ys)); y < Math.floor(Math.max(...ys)); y++) {
+          for (let x = Math.ceil(Math.min(...xs)); x < Math.floor(Math.max(...xs)); x++) {
+            if (pixels[((y - pixmap.getY()) * pixmap.getWidth() + x - pixmap.getX()) * 3] < 128) ink++;
+          }
+        }
+        expect(ink).toBeGreaterThan(20);
+        // Render a clipped tile around the word and verify its pixels match the full page.
+        const box: mupdf.Rect = [Math.floor(Math.min(...xs)), Math.floor(Math.min(...ys)), Math.ceil(Math.max(...xs)), Math.ceil(Math.max(...ys))];
+        const tile = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, box, false);
+        tile.clear(255);
+        const device = new mupdf.DrawDevice(geometry.matrix, tile);
+        page.run(device, mupdf.Matrix.identity);
+        device.close(); device.destroy();
+        const local = tileTransform(mupdf, geometry, box);
+        const centerX = (quad[0] + quad[6]) / 2, centerY = (quad[1] + quad[7]) / 2;
+        const point = transformPoint(local.matrix, centerX, centerY);
+        const recovered = canvasPointToPage(local, point.x / 2.3, point.y / 2.3,
+          tile.getWidth() / 2.3, tile.getHeight() / 2.3, tile.getWidth(), tile.getHeight());
+        expect(recovered.x).toBeCloseTo(centerX);
+        expect(recovered.y).toBeCloseTo(centerY);
+        const tilePixels = tile.getPixels();
+        const fullOffset = ((box[1] - pixmap.getY()) * pixmap.getWidth() + box[0] - pixmap.getX()) * 3;
+        for (let y = 0; y < tile.getHeight(); y++) {
+          expect(tilePixels.slice(y * tile.getStride(), (y + 1) * tile.getStride())).toEqual(
+            pixels.slice(fullOffset + y * pixmap.getStride(), fullOffset + y * pixmap.getStride() + tile.getStride()));
+        }
+        tile.destroy(); pixmap.destroy(); page.destroy(); object.destroy(); doc.destroy();
+      });
+    }
+  }
+  it('normalizes a nonzero page origin and rotates clockwise', () => {
+    const geometry = createPageTransform(mupdf, [10, 20, 622, 812], 1, 90);
+    expect(transformPoint(geometry.matrix, 82, 80)).toEqual({ x: 732, y: 72 });
   });
 });
 
