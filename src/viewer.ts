@@ -1041,7 +1041,7 @@ canvas.addEventListener('mouseup', (e) => {
     selectionStartIdx = -1;
     selectionEndIdx = -1;
     selectionPageChars = [];
-    handleLinkClick(e);
+    handleLinkClick(currentPage, e);
   }
 });
 
@@ -1086,6 +1086,7 @@ scrollContainer.addEventListener('mouseup', (e) => {
     selectionEndIdx = -1;
     selectionPageChars = [];
     refreshScrollPageOverlay(selectionPage);
+    handleLinkClick(selectionPage, e);
   }
 });
 
@@ -1314,41 +1315,45 @@ scrollContainer.addEventListener('dblclick', async (e) => {
 });
 
 /**
- * Resolve a left-click on the single-page canvas as a link activation.
+ * Resolve a left-click on either view as a link activation.
  *
  * Converts the click position to MuPDF page space and tests it against every
- * link on the current page.  External URIs are opened in the default browser
+ * link on the clicked page.  External URIs are opened in the default browser
  * via the host; internal destinations navigate to the target page.
  *
  * @param e - The original `mouseup` event.
  */
-function handleLinkClick(e: MouseEvent): void {
+function handleLinkClick(pageIndex: number, e: MouseEvent): void {
   if (!doc) return;
-  const pt = pointerToPage(currentPage, e);
+  const pt = pointerToPage(pageIndex, e);
   if (!pt) return;
 
-  const page = doc.loadPage(currentPage);
+  const page = doc.loadPage(pageIndex);
   const links = page.getLinks();
   page.destroy();
 
-  for (const link of links) {
-    const b = link.getBounds();
-    if (pt.x >= Math.min(b[0], b[2]) && pt.x <= Math.max(b[0], b[2]) &&
-        pt.y >= Math.min(b[1], b[3]) && pt.y <= Math.max(b[1], b[3])) {
-      const uri = link.getURI();
-      if (link.isExternal()) {
-        vscode.postMessage({ type: 'openExternal', url: uri });
-      } else {
-        try {
-          const dest = doc.resolveLinkDestination(uri);
-          goToPage(dest.page);
-        } catch (_e) {
-          const match = uri.match(/#page=(\d+)/i);
-          if (match) goToPage(parseInt(match[1]) - 1);
+  try {
+    for (const link of links) {
+      const b = link.getBounds();
+      if (pt.x >= Math.min(b[0], b[2]) && pt.x <= Math.max(b[0], b[2]) &&
+          pt.y >= Math.min(b[1], b[3]) && pt.y <= Math.max(b[1], b[3])) {
+        const uri = link.getURI();
+        if (link.isExternal()) {
+          vscode.postMessage({ type: 'openExternal', url: uri });
+        } else {
+          try {
+            const dest = doc.resolveLinkDestination(uri);
+            goToPage(dest.page);
+          } catch (_e) {
+            const match = uri.match(/#page=(\d+)/i);
+            if (match) goToPage(parseInt(match[1]) - 1);
+          }
         }
+        return;
       }
-      return;
     }
+  } finally {
+    for (const link of links) link.destroy();
   }
 }
 
