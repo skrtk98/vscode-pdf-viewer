@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.0.8]
+
+### Fixed
+- Align rendering, search highlights, text selection, and image hit testing through shared MuPDF page transforms, including rotated pages and clipped tiles.
+- Activate internal and external PDF links correctly in both single-page and continuous-scroll views.
+- Copy rendered pixels before releasing their WASM memory and clean up failed tile renders.
+- Preserve resolution settings and user zoom across reloads and retain initial settings during password entry.
+- Clear selections and pending selection updates when replacing a document.
+- Clear search highlights in continuous view and prevent missed results when navigating during incremental search.
+- Authenticate encrypted documents in the thumbnail worker and ignore outdated worker initialization after reloads.
+
+### Changed
+- Expand regression coverage to 60 tests, including actual MuPDF raster output, rotations, fractional zoom, reloads, links, search, and encrypted thumbnails.
+
+---
+
 ## [0.0.7]
 
 ### Changed
