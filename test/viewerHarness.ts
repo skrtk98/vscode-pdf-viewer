@@ -7,6 +7,8 @@ import { renderTile } from '../src/raster';
 /** Minimal DOM adapter; actual viewer handlers and MuPDF run unchanged. */
 export function createViewer() {
   const messages: any[] = [];
+  const workerMessages: any[] = [];
+  const thumbnailFetches: (() => void)[] = [];
   const clipboard: string[] = [];
   const idle = new Map<number, (deadline: { timeRemaining(): number }) => void>();
   const frames = new Map<number, () => void>();
@@ -78,7 +80,12 @@ export function createViewer() {
     ImageData: class { constructor(public data: Uint8ClampedArray, public width: number, public height: number) {} },
     acquireVsCodeApi: () => ({ postMessage: (msg: any) => messages.push(msg) }),
     navigator: { clipboard: { writeText: async (text: string) => { clipboard.push(text); } } },
-    fetch: () => new Promise(() => {}),
+    fetch: () => new Promise(resolve => { thumbnailFetches.push(() => resolve({ blob: async () => ({}) })); }),
+    URL: { createObjectURL: () => 'blob:thumbnail-worker', revokeObjectURL() {} },
+    Worker: class extends Element {
+      postMessage(message: any) { workerMessages.push(message); }
+      terminate() {}
+    },
     engine: mupdf, renderTile,
   });
   const coords = readFileSync('src/coords.ts', 'utf8').replace(/^export /gm, '');
@@ -88,7 +95,11 @@ export function createViewer() {
   const evaluate = (code: string): any => runInContext(code, context);
   evaluate('mupdf = engine;');
   return {
-    evaluate, element, window, document, messages, clipboard, frames,
+    evaluate, element, window, document, messages, clipboard, frames, workerMessages,
+    async finishThumbnailFetch(index: number) {
+      thumbnailFetches[index]();
+      for (let i = 0; i < 6; i++) await Promise.resolve();
+    },
     async loadData(data: Uint8Array, extra: Record<string, unknown> = {}) {
       await window.dispatch('message', { data: { type: 'load', data, ...extra } });
     },

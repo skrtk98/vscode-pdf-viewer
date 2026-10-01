@@ -29,6 +29,7 @@ let searchQuery = '';
 let searchHitIndex = -1;
 let searchIdleHandle: number | null = null;
 let worker: Worker | null = null;
+let thumbnailGeneration = 0;
 let renderScale = 1.0;
 let singleTransform: PageTransform | null = null;
 const scrollTransforms = new Map<number, PageTransform>();
@@ -577,7 +578,7 @@ function loadDocument(data: Uint8Array, password?: string, settings?: { defaultZ
     } else {
       renderPage();
     }
-    startThumbnails(data);
+    startThumbnails(data, password);
 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -1390,7 +1391,8 @@ function handleLinkClick(pageIndex: number, e: MouseEvent): void {
  *
  * @param data - Raw PDF file bytes to send to the worker.
  */
-function startThumbnails(data: Uint8Array): void {
+function startThumbnails(data: Uint8Array, password?: string): void {
+  const generation = ++thumbnailGeneration;
   if (worker) { worker.terminate(); worker = null; }
   if (thumbObserver) { thumbObserver.disconnect(); thumbObserver = null; }
   thumbsPanel.innerHTML = '';
@@ -1418,6 +1420,7 @@ function startThumbnails(data: Uint8Array): void {
   fetch(window.WORKER_URI)
     .then((r) => r.blob())
     .then((blob) => {
+      if (generation !== thumbnailGeneration) return;
       const blobUrl = URL.createObjectURL(blob);
       worker = new Worker(blobUrl, { type: 'module' });
       URL.revokeObjectURL(blobUrl);
@@ -1426,9 +1429,11 @@ function startThumbnails(data: Uint8Array): void {
         mupdfUri: window.MUPDF_JS_URI,
         wasmUri: window.WASM_URI,
         data,
+        password,
       });
 
       worker.addEventListener('message', (e) => {
+        if (generation !== thumbnailGeneration) return;
         const msg = e.data;
         if (msg.type === 'ready') {
           thumbObserver = new IntersectionObserver((entries) => {

@@ -168,3 +168,27 @@ describe('incremental search', () => {
     expect(viewer.evaluate('searchHits.map(hits => hits.length)')).toEqual([1, 0]);
   });
 });
+
+
+describe('thumbnail initialization', () => {
+  it('forwards the password used to open the document to the worker', async () => {
+    viewer = createViewer();
+    const doc = mupdf.Document.openDocument(readFileSync('test/fixtures/simple.pdf'), 'application/pdf') as mupdf.PDFDocument;
+    const buffer = doc.saveToBuffer('encrypt=aes-256,user-password=secret,owner-password=owner');
+    const bytes = new Uint8Array(buffer.asUint8Array());
+    buffer.destroy(); doc.destroy();
+    await viewer.loadData(bytes, { password: 'secret' });
+    await viewer.finishThumbnailFetch(0);
+    expect(viewer.workerMessages).toHaveLength(1);
+    expect(viewer.workerMessages[0]).toMatchObject({ type: 'init', password: 'secret', data: bytes });
+  });
+  it('ignores a stale worker fetch completing after a reload', async () => {
+    viewer = createViewer();
+    await viewer.load('simple');
+    await viewer.load('searchable');
+    await viewer.finishThumbnailFetch(1);
+    await viewer.finishThumbnailFetch(0);
+    expect(viewer.workerMessages).toHaveLength(1);
+    expect(viewer.workerMessages[0].data).toEqual(readFileSync('test/fixtures/searchable.pdf'));
+  });
+});

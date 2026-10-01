@@ -16,6 +16,8 @@ interface InitMessage {
   wasmUri: string;
   /** Raw PDF file bytes. */
   data: Uint8Array;
+  /** Password already supplied to the viewer, used only to open this document. */
+  password?: string;
 }
 
 /** Message sent from the host to request a thumbnail for a single page. */
@@ -29,7 +31,7 @@ self.addEventListener('message', async (event: MessageEvent<InitMessage | Render
   const msg = event.data;
 
   if (msg.type === 'init') {
-    const { mupdfUri, wasmUri, data } = msg;
+    const { mupdfUri, wasmUri, data, password } = msg;
     try {
       (globalThis as Record<string, unknown>)['$libmupdf_wasm_Module'] = {
         locateFile: (filename: string) =>
@@ -39,7 +41,13 @@ self.addEventListener('message', async (event: MessageEvent<InitMessage | Render
       const m = await import(/* @vite-ignore */ mupdfUri) as { default?: typeof MupdfModule } & typeof MupdfModule;
       mupdf = (m.default ?? m) as typeof MupdfModule;
 
-      doc = mupdf.Document.openDocument(data, 'application/pdf');
+      const opened = mupdf.Document.openDocument(data, 'application/pdf');
+      if (opened.needsPassword() && (!password || opened.authenticatePassword(password) === 0)) {
+        opened.destroy();
+        throw new Error('Cannot render thumbnails without the correct PDF password.');
+      }
+      doc?.destroy();
+      doc = opened;
       self.postMessage({ type: 'ready' });
       for (const page of pendingRenders) {
         await renderThumb(page);
