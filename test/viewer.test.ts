@@ -192,3 +192,47 @@ describe('thumbnail initialization', () => {
     expect(viewer.workerMessages[0].data).toEqual(readFileSync('test/fixtures/searchable.pdf'));
   });
 });
+
+
+describe('transformed viewer interactions', () => {
+  for (const mode of ['single', 'scroll']) {
+    for (const rotation of [0, 90, 180, 270]) {
+      it(`selects the visible word at fractional zoom and DPI in ${mode}, rotation ${rotation}`, async () => {
+        viewer = createViewer();
+        viewer.evaluate(`viewMode = '${mode}'; dpr = 1.25;`);
+        await viewer.load('searchable', { defaultZoom: 1.33, renderResolution: 144 });
+        viewer.evaluate(`pageRotations.set(0, ${rotation}); pageDimensionsCache.clear(); ${mode === 'single' ? 'renderPage()' : 'renderScrollPage(0)'}; startSearch('Hello');`);
+        const root = mode === 'single' ? viewer.element('pdf-canvas') : viewer.element('scroll-container');
+        const target = mode === 'single' ? root : root.querySelector('[data-page="0"]')!.querySelector('.scroll-page-canvas')!;
+        const overlay = mode === 'single' ? viewer.element('search-overlay') : root.querySelector('[data-page="0"]')!.querySelector('.scroll-page-overlay')!;
+        const highlight = overlay.fills[0];
+        // Click the center of the painted search hit, in actual CSS dimensions.
+        const x = (highlight[0] + highlight[4]) / 2;
+        const y = (highlight[1] + highlight[5]) / 2;
+        await root.dispatch('dblclick', { target, clientX: x * target.rect.width / target.width, clientY: y * target.rect.height / target.height });
+        await viewer.evaluate('copySelection()');
+        expect(viewer.clipboard).toEqual(['Hello']);
+        expect(overlay.fills.length).toBe(2);
+      });
+    }
+  }
+  it('hit-tests a clipped tile after CSS resizing before the next render', async () => {
+    viewer = createViewer();
+    await viewer.load('simple', { defaultZoom: 4, renderResolution: 144 });
+    viewer.evaluate(`const p = doc.loadPage(0); p.createLink([400,400,480,450], 'https://example.com/tile').destroy(); p.destroy();`);
+    const root = viewer.element('scroll-container');
+    const wrapper = root.querySelector('[data-page="0"]')!;
+    wrapper.rect = { left: -1000, top: -1000, width: 2448, height: 3168 };
+    viewer.evaluate('renderScrollPage(0);');
+    expect(viewer.evaluate('pageTiles.get(0).cssLeft')).toBeGreaterThan(0);
+    expect(viewer.evaluate('pageTiles.get(0).cssTop')).toBeGreaterThan(0);
+    const target = wrapper.querySelector('.scroll-page-canvas')!;
+    // Simulate CSS zoom while retaining the old tile pixels until the debounce fires.
+    target.rect = { left: -200, top: -150, width: parseFloat(target.style.width) * 1.25, height: parseFloat(target.style.height) * 1.25 };
+    const local = viewer.evaluate('transformPoint(scrollTransforms.get(0).matrix, 440, 425)');
+    const event = { target, clientX: target.rect.left + local.x * target.rect.width / target.width, clientY: target.rect.top + local.y * target.rect.height / target.height };
+    await root.dispatch('mousedown', event);
+    await root.dispatch('mouseup', event);
+    expect(viewer.messages).toContainEqual({ type: 'openExternal', url: 'https://example.com/tile' });
+  });
+});

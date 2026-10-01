@@ -137,7 +137,7 @@ function buildCharList(pageIndex: number): CharInfo[] {
 }
 
 /**
- * Find the index of the character whose centroid is nearest to a canvas point.
+ * Find the index of the character whose centroid is nearest to a MuPDF page point.
  *
  * Uses squared Euclidean distance so no `Math.sqrt` is needed.
  *
@@ -1390,6 +1390,7 @@ function handleLinkClick(pageIndex: number, e: MouseEvent): void {
  * into view.
  *
  * @param data - Raw PDF file bytes to send to the worker.
+ * @param password - Password used to authenticate the main document.
  */
 function startThumbnails(data: Uint8Array, password?: string): void {
   const generation = ++thumbnailGeneration;
