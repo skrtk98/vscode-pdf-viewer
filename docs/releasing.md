@@ -17,11 +17,8 @@ Install the resulting VSIX with **Extensions: Install from VSIX…** and check o
 
 ## Registry setup
 
-For Visual Studio Marketplace, configure a publishing token for the existing `skrtk98` publisher and save it as the GitHub repository secret `VSCE_PAT`.
-Follow the [VS Code publishing guide](https://code.visualstudio.com/api/working-with-extensions/publishing-extension) for token permissions and publisher access.
-
-Marketplace currently uses `VSCE_PAT`; changing its authentication is separate from Open VSX trusted publishing.
-Microsoft has announced retirement of Azure DevOps global PATs on December 1, 2026; follow the publishing guide above when migrating Marketplace authentication.
+Visual Studio Marketplace uses Microsoft Entra ID through GitHub OIDC federation.
+Open VSX uses its own trusted publishing integration. Neither release job requires a PAT.
 
 ### Marketplace migration to Microsoft Entra ID
 
@@ -32,7 +29,7 @@ Marketplace publishing uses `vsce --azure-credential`; see the [Microsoft publis
 The [authentication verification workflow](../.github/workflows/verify-marketplace-auth.yml) is ready for the following setup:
 
 1. In an Entra tenant where you may register applications, create a dedicated single-tenant application named `mupdf-viewer-publisher`. Record its Application (client) ID and Directory (tenant) ID. Do not create a client secret.
-2. Under the application's **Certificates & secrets → Federated credentials**, add a GitHub Actions credential with owner `skrtk98`, repository `vscode-pdf-viewer`, entity type **Environment**, and environment name `marketplace`.
+2. Under the application's **Certificates & secrets → Federated credentials**, select **Other issuer** and add a credential named `github-marketplace-environment` with the exact values below. The GitHub preset can generate an ID-based subject that does not match this repository's current token.
    - Issuer: `https://token.actions.githubusercontent.com`
    - Subject: `repo:skrtk98/vscode-pdf-viewer:environment:marketplace`
    - Audience: `api://AzureADTokenExchange`
@@ -40,11 +37,11 @@ The [authentication verification workflow](../.github/workflows/verify-marketpla
 4. Run **Verify Marketplace authentication** on `main` with `verify_permissions` unchecked. Its summary reports the identity ID returned by the Azure DevOps profile API. This is the ID to use in Marketplace, rather than assuming the application ID or Entra object ID is interchangeable.
 5. In Marketplace publisher `skrtk98`, open **Members** and add that identity as a **Contributor**.
 6. Run the verification workflow again with `verify_permissions` checked. `vsce verify-pat skrtk98 --azure-credential` checks publishing rights without uploading a package, despite the historical command name.
-7. After successful verification, update `publish-marketplace` in `release.yml` to use environment `marketplace`, job permission `id-token: write`, and the same Azure Login step. Remove `VSCE_PAT` and publish with `--azure-credential --packagePath mupdf-viewer.vsix --skip-duplicate`.
-8. Verify the changed release job against an unchanged version already published to Marketplace. After success, remove any unused `VSCE_PAT` secret and revoke its token if not used elsewhere.
+7. The `publish-marketplace` job in `release.yml` uses environment `marketplace`, job permission `id-token: write`, and the same Azure Login step. It verifies publishing rights and publishes with `--azure-credential --packagePath mupdf-viewer.vsix --skip-duplicate`.
+8. Configuration pushes to `main` exercise this release job using version 0.0.8 downloaded directly from Marketplace. Success followed by duplicate skipping verifies the publishing authentication path. After success, remove any unused `VSCE_PAT` secret and revoke its token if not used elsewhere.
 
 The verification workflow is manual and does not publish or modify extensions.
-The existing release job still uses PAT authentication until identity access has been verified and the switch in step 7 has been made.
+The release job has no PAT fallback. Keep the federated subject aligned with the actual GitHub token if the repository OIDC subject configuration changes.
 If the account cannot register applications, obtain access to an appropriate Entra tenant before continuing.
 
 Direct Marketplace trusted publishing remains a separate option: `@vscode/vsce` 4.0.0 includes a hidden `--oidc` flag, but no registration setting was visible in this publisher's management UI on October 1, 2026.
@@ -86,10 +83,10 @@ Check the Marketplace listing and GitHub Release asset as well.
 
 ## Verifying trusted publishing
 
-Pushing changes to `release.yml`, `package.json`, or `package-lock.json` on `main` runs only the `verify-open-vsx` job.
+Pushing changes to `release.yml`, `package.json`, or `package-lock.json` on `main` runs `verify-open-vsx` and `publish-marketplace` against already published packages.
 It downloads the latest already-published VSIX from Open VSX and submits it with `--trusted-publishing --skip-duplicate`.
 `ovsx` exchanges the OIDC token before attempting the upload; success followed by “already published” confirms the registered workflow can authenticate without creating a new version.
-This check does not publish the development checkout or invoke Marketplace publication.
+The Marketplace job downloads its existing 0.0.8 VSIX, verifies Entra publishing rights, and invokes publication with duplicate skipping. Neither check packages the development checkout or creates a new version.
 
 ## Publishing an existing release to Open VSX
 

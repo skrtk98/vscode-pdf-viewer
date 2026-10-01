@@ -77,9 +77,19 @@ jobs:
           if-no-files-found: error
 
   publish-marketplace:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    # On main, verify the same authentication path against an existing version.
+    if: >-
+      !cancelled() && github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' ||
+       (startsWith(github.ref, 'refs/tags/v') && needs.package.result == 'success'))
     needs: package
     runs-on: ubuntu-latest
+    environment: marketplace
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_CORE_OUTPUT: none
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -88,14 +98,25 @@ jobs:
           cache: npm
       - run: npm ci
       - uses: actions/download-artifact@v4
+        if: startsWith(github.ref, 'refs/tags/v')
         with:
           name: extension-vsix
+      - name: Download an already published Marketplace version for verification
+        if: github.ref == 'refs/heads/main'
+        run: >-
+          curl --fail --location --retry 3
+          'https://marketplace.visualstudio.com/_apis/public/gallery/publishers/skrtk98/vsextensions/mupdf-viewer/0.0.8/vspackage'
+          --output mupdf-viewer.vsix
+      - name: Sign in through GitHub OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: Verify Marketplace publishing rights
+        run: npx --no-install vsce verify-pat skrtk98 --azure-credential
       - name: Publish to Visual Studio Marketplace
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: |
-          test -n "$VSCE_PAT" || { echo 'Set the VSCE_PAT repository secret.'; exit 1; }
-          npx --no-install vsce publish --packagePath mupdf-viewer.vsix --skip-duplicate
+        run: npx --no-install vsce publish --azure-credential --packagePath mupdf-viewer.vsix --skip-duplicate
 
   publish-open-vsx:
     needs: package
