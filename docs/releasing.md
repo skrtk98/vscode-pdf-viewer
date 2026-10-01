@@ -20,8 +20,26 @@ Install the resulting VSIX with **Extensions: Install from VSIX…** and check o
 For Visual Studio Marketplace, configure a publishing token for the existing `skrtk98` publisher and save it as the GitHub repository secret `VSCE_PAT`.
 Follow the [VS Code publishing guide](https://code.visualstudio.com/api/working-with-extensions/publishing-extension) for token permissions and publisher access.
 
-Marketplace currently uses `VSCE_PAT`; its Microsoft Entra ID migration is separate from Open VSX trusted publishing.
+Marketplace currently uses `VSCE_PAT`; changing its authentication is separate from Open VSX trusted publishing.
 Microsoft has announced retirement of Azure DevOps global PATs on December 1, 2026; follow the publishing guide above when migrating Marketplace authentication.
+
+### Marketplace OIDC migration
+
+The locked `@vscode/vsce` 4.0.0 includes `publish --oidc`, although this option is hidden from CLI help.
+The [upstream trusted publishing documentation](https://github.com/microsoft/vscode-vsce#trusted-publishing) requires a Marketplace trusted publishing policy for the GitHub repository and workflow.
+CLI support alone does not establish that this policy can be configured for the publisher.
+
+Before switching the release job:
+
+1. Confirm that [publisher management](https://marketplace.visualstudio.com/manage/publishers/skrtk98) offers trusted publishing and register `skrtk98/vscode-pdf-viewer` with workflow `release.yml`. Record any required environment or ref restrictions before changing the workflow.
+2. Confirm the released CLI supports the Marketplace token exchange in use. Version 4.0.0's implementation differs from the current upstream source; pin a compatible released version if an update is needed.
+3. Grant `id-token: write` to `publish-marketplace`, remove its `VSCE_PAT` environment variable, and add `--oidc` to its publish command.
+4. Verify authentication in GitHub Actions using an unchanged version already published to Marketplace and `--skip-duplicate`. Only after this succeeds, remove any unused Marketplace publishing secret and revoke its token if it is not used elsewhere.
+
+Until these checks succeed, the Marketplace release job retains its existing authentication.
+Microsoft Entra ID with workload identity federation remains an alternative if direct trusted publishing is unavailable.
+
+### Open VSX
 
 For Open VSX, use [Trusted Publishing](https://github.com/eclipse-openvsx/openvsx/wiki/Trusted-Publishing):
 
@@ -34,6 +52,8 @@ The extension and namespace already exist. Trusted publishing requires an active
 A single trusted publisher can be registered per extension, so both tag and manual publication use `release.yml`.
 Registrations are not bound to a branch/tag; keep changes to the registered workflow controlled.
 After verifying trusted publishing, remove the unused `OVSX_PAT` repository secret and revoke its Open VSX token if it is not used elsewhere.
+Delete the secret under [repository Settings → Secrets and variables → Actions](https://github.com/skrtk98/vscode-pdf-viewer/settings/secrets/actions).
+Deleting a GitHub secret does not revoke the underlying token: remove that token separately in Open VSX account settings.
 Never put tokens in tracked files, command arguments, or logs.
 
 ## Tag release
