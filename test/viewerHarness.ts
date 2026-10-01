@@ -89,6 +89,9 @@ export function createViewer() {
   evaluate('mupdf = engine;');
   return {
     evaluate, element, window, document, messages, clipboard, frames,
+    async loadData(data: Uint8Array, extra: Record<string, unknown> = {}) {
+      await window.dispatch('message', { data: { type: 'load', data, ...extra } });
+    },
     async load(fixture: string, extra: Record<string, unknown> = {}) {
       await window.dispatch('message', { data: { type: 'load', data: readFileSync(`test/fixtures/${fixture}.pdf`), ...extra } });
       if (messages.some(m => m.type === 'error')) throw new Error(JSON.stringify(messages));

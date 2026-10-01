@@ -20,6 +20,7 @@ type ViewMode = 'single' | 'scroll';
 let doc: MupdfTypes.Document | null = null;
 let currentPage = 0;
 let totalPages = 0;
+let hasLoadedDocument = false;
 let scale = 1.0;
 let dpr = window.devicePixelRatio || 1;
 let pageRotations: Map<number, number> = new Map();
@@ -510,7 +511,8 @@ function loadDocument(data: Uint8Array, password?: string, settings?: { defaultZ
     doc = null;
   }
 
-  if (settings) defaultSettings = settings;
+  if (settings?.defaultZoom !== undefined) defaultSettings.defaultZoom = settings.defaultZoom;
+  if (settings?.renderResolution !== undefined) defaultSettings.renderResolution = settings.renderResolution;
 
   try {
     const newDoc = mupdf.Document.openDocument(data, 'application/pdf');
@@ -536,11 +538,13 @@ function loadDocument(data: Uint8Array, password?: string, settings?: { defaultZ
     stextCache.forEach(s => s.destroy());
     stextCache.clear();
 
-    const zoom = (settings ?? defaultSettings).defaultZoom;
-    if (zoom && zoom > 0) {
+    const zoom = defaultSettings.defaultZoom;
+    if (!hasLoadedDocument && zoom && zoom > 0) {
       scale = zoom;
       zoomInput.value = `${Math.round(scale * 100)}%`;
     }
+
+    hasLoadedDocument = true;
 
     if (currentPage >= totalPages) currentPage = totalPages - 1;
     if (currentPage < 0) currentPage = 0;

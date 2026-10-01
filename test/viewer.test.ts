@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import mupdf from 'mupdf';
+import { readFileSync } from 'node:fs';
 import { createViewer } from './viewerHarness';
 
 let viewer: ReturnType<typeof createViewer> | undefined;
@@ -53,5 +55,32 @@ describe('scroll raster lifetime', () => {
     expect(scrollImage.width).toBe(singleImage.width);
     expect(scrollImage.height).toBe(singleImage.height);
     expect(Buffer.from(scrollImage.data).equals(Buffer.from(singleImage.data))).toBe(true);
+  });
+});
+
+
+describe('viewer settings', () => {
+  it('preserves resolution and user zoom when a file reload omits settings', async () => {
+    viewer = createViewer();
+    await viewer.load('simple', { defaultZoom: 1.25, renderResolution: 192 });
+    expect(viewer.evaluate('scale')).toBe(1.25);
+    viewer.evaluate('applyScale(2);');
+    await viewer.load('simple');
+    expect(viewer.evaluate('scale')).toBe(2);
+    expect(viewer.evaluate('computeRenderScale()')).toBe(4);
+  });
+
+  it('retains initial settings while waiting for a PDF password', async () => {
+    viewer = createViewer();
+    const doc = mupdf.Document.openDocument(readFileSync('test/fixtures/simple.pdf'), 'application/pdf') as mupdf.PDFDocument;
+    const buffer = doc.saveToBuffer('encrypt=aes-256,user-password=secret,owner-password=owner');
+    const bytes = new Uint8Array(buffer.asUint8Array());
+    buffer.destroy(); doc.destroy();
+    await viewer.loadData(bytes, { defaultZoom: 1.5, renderResolution: 192 });
+    expect(viewer.messages).toContainEqual({ type: 'requestPassword' });
+    await viewer.loadData(bytes, { password: 'secret' });
+    expect(viewer.evaluate('scale')).toBe(1.5);
+    expect(viewer.evaluate('computeRenderScale()')).toBe(3);
+    expect(viewer.messages.filter(m => m.type === 'error')).toEqual([]);
   });
 });
