@@ -40,3 +40,18 @@ describe('PDF links', () => {
     expect(viewer.evaluate('currentPage')).toBe(4);
   });
 });
+
+
+describe('scroll raster lifetime', () => {
+  it('copies exactly the same pixels as the single-page renderer', async () => {
+    viewer = createViewer();
+    await viewer.load('simple');
+    viewer.evaluate('renderScrollPage(0);');
+    const scrollImage = viewer.element('scroll-container').querySelector('[data-page="0"]')!.querySelector('.scroll-page-canvas')!.image;
+    viewer.evaluate("viewMode = 'single'; renderPage();");
+    const singleImage = viewer.element('pdf-canvas').image;
+    expect(scrollImage.width).toBe(singleImage.width);
+    expect(scrollImage.height).toBe(singleImage.height);
+    expect(Buffer.from(scrollImage.data).equals(Buffer.from(singleImage.data))).toBe(true);
+  });
+});

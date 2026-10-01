@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
 import ts from 'typescript';
 import mupdf from 'mupdf';
+import { renderTile } from '../src/raster';
 
 /** Minimal DOM adapter; actual viewer handlers and MuPDF run unchanged. */
 export function createViewer() {
@@ -78,7 +79,7 @@ export function createViewer() {
     acquireVsCodeApi: () => ({ postMessage: (msg: any) => messages.push(msg) }),
     navigator: { clipboard: { writeText: async (text: string) => { clipboard.push(text); } } },
     fetch: () => new Promise(() => {}),
-    engine: mupdf,
+    engine: mupdf, renderTile,
   });
   const coords = readFileSync('src/coords.ts', 'utf8').replace(/^export /gm, '');
   let viewer = readFileSync('src/viewer.ts', 'utf8').replace(/^import .*;\n/gm, '');

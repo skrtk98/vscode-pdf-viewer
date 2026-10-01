@@ -1,4 +1,5 @@
 import type * as MupdfTypes from 'mupdf';
+import { renderTile } from './raster';
 import { createPageTransform, tileTransform, transformPoint, canvasPointToPage, PageTransform, Matrix, buildOutlineTree, OutlineNode } from './coords';
 
 declare global {
@@ -1799,25 +1800,14 @@ function renderScrollPage(pageIndex: number): void {
     Math.ceil( tileCSS.bottom * devScale),
   ];
 
-  const pixmap = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, tileDevBbox, false);
-  scrollTransforms.set(pageIndex, tileTransform(mupdf, geometry, tileDevBbox));
-  pixmap.clear(255);
-  const device = new mupdf.DrawDevice(matrix, pixmap);
-  page.runPageContents(device, mupdf.Matrix.identity);
-  page.runPageAnnots(device, mupdf.Matrix.identity);
-  device.close();
-  device.destroy();
-
-  const rgb = pixmap.getPixels();
-  const pw  = pixmap.getWidth();
-  const ph  = pixmap.getHeight();
-  pixmap.destroy();
-  page.destroy();
-
-  const rgba = new Uint8ClampedArray(pw * ph * 4);
-  for (let i = 0, j = 0; i < rgb.length; i += 3, j += 4) {
-    rgba[j] = rgb[i]; rgba[j + 1] = rgb[i + 1]; rgba[j + 2] = rgb[i + 2]; rgba[j + 3] = 255;
+  let pixels: ReturnType<typeof renderTile>;
+  try {
+    pixels = renderTile(mupdf, page, matrix, tileDevBbox);
+  } finally {
+    page.destroy();
   }
+  scrollTransforms.set(pageIndex, tileTransform(mupdf, geometry, tileDevBbox));
+  const { data: rgba, width: pw, height: ph } = pixels;
 
   const mc = wrapper.querySelector<HTMLCanvasElement>('.scroll-page-canvas')!;
   const oc = wrapper.querySelector<HTMLCanvasElement>('.scroll-page-overlay')!;
