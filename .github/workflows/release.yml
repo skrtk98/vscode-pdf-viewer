@@ -104,7 +104,7 @@ jobs:
       - name: Download an already published Marketplace version for verification
         if: github.ref == 'refs/heads/main'
         run: >-
-          curl --fail --location --retry 3
+          curl --fail --location --compressed --retry 3
           'https://marketplace.visualstudio.com/_apis/public/gallery/publishers/skrtk98/vsextensions/mupdf-viewer/0.0.8/vspackage'
           --output mupdf-viewer.vsix
       - name: Sign in through GitHub OIDC
