@@ -138,3 +138,33 @@ describe('search overlays', () => {
     expect(viewer.evaluate('currentPage')).toBe(0);
   });
 });
+
+
+describe('incremental search', () => {
+  it('searches the page navigated to while idle work is pending and paints its hits', async () => {
+    viewer = createViewer();
+    await viewer.load('searchable');
+    viewer.evaluate('renderScrollPage(1); startSearch("Page"); goToPage(1);');
+    viewer.flushIdle();
+    expect(viewer.evaluate('getTotalHits()')).toBe(1);
+    expect(viewer.element('search-info').textContent).toBe('- / 1');
+    const overlay = viewer.element('scroll-container').querySelector('[data-page="1"]')!.querySelector('.scroll-page-overlay')!;
+    expect(overlay.fills.length).toBeGreaterThan(0);
+  });
+  it('keeps the selected hit when earlier pages finish searching', async () => {
+    viewer = createViewer();
+    await viewer.load('multi-page');
+    viewer.evaluate('goToPage(3); startSearch("Page"); navigateSearch(1);');
+    viewer.flushIdle();
+    expect(viewer.evaluate('searchHitIndex')).toBe(3);
+    expect(viewer.evaluate('currentPage')).toBe(3);
+    expect(viewer.element('search-info').textContent).toBe('4 / 5');
+  });
+  it('cancels old idle work when the query is replaced', async () => {
+    viewer = createViewer();
+    await viewer.load('searchable');
+    viewer.evaluate('startSearch("Page"); startSearch("Hello");');
+    viewer.flushIdle();
+    expect(viewer.evaluate('searchHits.map(hits => hits.length)')).toEqual([1, 0]);
+  });
+});

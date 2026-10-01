@@ -904,22 +904,24 @@ function startSearch(query: string): void {
   searchQuery = query;
   searchHits = Array.from({ length: totalPages }, () => []);
 
-  searchPageNow(currentPage);
+  const initialPage = currentPage;
+  searchPageNow(initialPage);
   updateSearchInfo();
   drawHighlights();
 
   let pageToSearch = 0;
   const tick = (deadline: IdleDeadline) => {
     while (deadline.timeRemaining() > 1 && pageToSearch < totalPages) {
-      if (pageToSearch !== currentPage) searchPageNow(pageToSearch);
+      if (pageToSearch !== initialPage) searchPageNow(pageToSearch);
       pageToSearch++;
     }
     if (pageToSearch < totalPages) {
       searchIdleHandle = requestIdleCallback(tick);
     } else {
       searchIdleHandle = null;
-      updateSearchInfo();
     }
+    updateSearchInfo();
+    drawHighlights();
   };
   searchIdleHandle = requestIdleCallback(tick);
 }
@@ -933,6 +935,8 @@ function startSearch(query: string): void {
  */
 function searchPageNow(pageIndex: number): void {
   if (!doc || !searchQuery) return;
+  const previousCount = searchHits[pageIndex]?.length ?? 0;
+  const previousEnd = searchHits.slice(0, pageIndex).reduce((sum, hits) => sum + hits.length, 0) + previousCount;
   const page = doc.loadPage(pageIndex);
   try {
     searchHits[pageIndex] = page.search(searchQuery);
@@ -940,6 +944,10 @@ function searchPageNow(pageIndex: number): void {
     searchHits[pageIndex] = [];
   } finally {
     page.destroy();
+  }
+  // Inserting earlier results must not move an already selected hit to another page.
+  if (searchHitIndex >= previousEnd) {
+    searchHitIndex += searchHits[pageIndex].length - previousCount;
   }
 }
 
@@ -992,7 +1000,7 @@ function navigateSearch(dir: 1 | -1): void {
           pageInput.value = String(p + 1);
           scrollToPage(p);
         }
-        refreshScrollPageOverlay(p);
+        drawHighlights();
       } else {
         if (p !== currentPage) {
           currentPage = p;
