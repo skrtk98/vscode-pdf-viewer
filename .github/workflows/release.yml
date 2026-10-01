@@ -4,44 +4,82 @@ on:
   push:
     tags:
       - 'v*'
+    branches:
+      - main
+    paths:
+      - .github/workflows/release.yml
+      - package.json
+      - package-lock.json
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stable tag to publish to Open VSX only
+        required: true
+        type: string
+        default: v0.0.8
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ inputs.tag || github.ref }}
   cancel-in-progress: false
 
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
 jobs:
-  package:
+  verify-open-vsx:
+    # Configuration changes exercise authentication against an existing version.
+    # No new version is published from a branch push.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: npm
+      - run: npm ci
+      - name: Download an already published version
+        run: npx --no-install ovsx get skrtk98.mupdf-viewer --output "$RUNNER_TEMP/published.vsix"
+      - name: Verify trusted publishing with duplicate protection
+        run: npx --no-install ovsx publish "$RUNNER_TEMP/published.vsix" --trusted-publishing --skip-duplicate
+
+  package:
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate release tag format
+        run: node -e 'if (!/^v\d+\.\d+\.\d+$/.test(process.env.RELEASE_TAG)) throw new Error("Expected a stable vX.Y.Z tag");'
+      - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
       - name: Check tag matches package version
         run: |
-          node -e 'const p = require("./package.json"); if (process.env.GITHUB_REF_NAME !== `v${p.version}` || !/^\d+\.\d+\.\d+$/.test(p.version)) { throw new Error("Use a stable vX.Y.Z tag matching package.json"); }'
+          node -e 'const p = require("./package.json"); if (process.env.RELEASE_TAG !== `v${p.version}`) throw new Error("Tag must match package.json");'
       - run: npm ci
       - run: npm run check
       - run: npm test
       - name: Build and package
-        run: npm run package -- --out mupdf-viewer.vsix --baseContentUrl "https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}" --baseImagesUrl "https://github.com/${GITHUB_REPOSITORY}/raw/${GITHUB_REF_NAME}"
+        run: npm run package -- --out mupdf-viewer.vsix --baseContentUrl "https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}" --baseImagesUrl "https://github.com/${GITHUB_REPOSITORY}/raw/${RELEASE_TAG}"
       - uses: actions/upload-artifact@v4
         with:
           name: extension-vsix
           path: mupdf-viewer.vsix
           if-no-files-found: error
 
-  publish:
+  publish-marketplace:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: package
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        registry: [marketplace, open-vsx]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -53,22 +91,40 @@ jobs:
         with:
           name: extension-vsix
       - name: Publish to Visual Studio Marketplace
-        if: matrix.registry == 'marketplace'
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
           test -n "$VSCE_PAT" || { echo 'Set the VSCE_PAT repository secret.'; exit 1; }
           npx --no-install vsce publish --packagePath mupdf-viewer.vsix --skip-duplicate
-      - name: Publish to Open VSX
-        if: matrix.registry == 'open-vsx'
-        env:
-          OVSX_PAT: ${{ secrets.OVSX_PAT }}
-        run: |
-          test -n "$OVSX_PAT" || { echo 'Set the OVSX_PAT repository secret.'; exit 1; }
-          npx --no-install ovsx publish mupdf-viewer.vsix --skip-duplicate
+
+  publish-open-vsx:
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      # On manual runs use the workflow revision's locked tools, even when the
+      # extension is built from an older tag that predates OIDC support.
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: extension-vsix
+      - name: Publish to Open VSX with trusted publishing
+        run: npx --no-install ovsx publish mupdf-viewer.vsix --trusted-publishing --skip-duplicate
 
   github-release:
-    needs: [package, publish]
+    needs: [package, publish-marketplace, publish-open-vsx]
+    if: >-
+      !cancelled() && needs.package.result == 'success' &&
+      needs.publish-open-vsx.result == 'success' &&
+      (needs.publish-marketplace.result == 'success' ||
+       (github.event_name == 'workflow_dispatch' && needs.publish-marketplace.result == 'skipped'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -80,7 +136,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
+          if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes --title "$RELEASE_TAG"
           fi
-          gh release upload "$GITHUB_REF_NAME" mupdf-viewer.vsix --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$RELEASE_TAG" mupdf-viewer.vsix --repo "$GITHUB_REPOSITORY" --clobber
