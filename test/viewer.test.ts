@@ -84,3 +84,35 @@ describe('viewer settings', () => {
     expect(viewer.messages.filter(m => m.type === 'error')).toEqual([]);
   });
 });
+
+
+describe('document selection lifecycle', () => {
+  it('drops selected text and pending drag painting when the document reloads', async () => {
+    viewer = createViewer();
+    viewer.evaluate("viewMode = 'single';");
+    await viewer.load('searchable');
+    const canvas = viewer.element('pdf-canvas');
+    await canvas.dispatch('dblclick', { clientX: 80, clientY: 67 });
+    await viewer.evaluate('copySelection()');
+    expect(viewer.clipboard).toEqual(['Hello']);
+    await canvas.dispatch('mousedown', { clientX: 75, clientY: 67 });
+    await canvas.dispatch('mousemove', { clientX: 95, clientY: 67 });
+    expect(viewer.frames.size).toBe(1);
+    await viewer.load('simple');
+    expect(viewer.frames.size).toBe(0);
+    expect(viewer.evaluate('isDragging')).toBe(false);
+    expect(viewer.evaluate('selectionPageChars.length')).toBe(0);
+    await viewer.evaluate('copySelection()');
+    expect(viewer.clipboard).toEqual(['Hello']);
+    expect(viewer.element('search-overlay').fills).toEqual([]);
+  });
+  it('does not paint a previous page selection on the next single page', async () => {
+    viewer = createViewer();
+    viewer.evaluate("viewMode = 'single';");
+    await viewer.load('searchable');
+    await viewer.element('pdf-canvas').dispatch('dblclick', { clientX: 80, clientY: 67 });
+    expect(viewer.element('search-overlay').fills.length).toBeGreaterThan(0);
+    viewer.evaluate('goToPage(1);');
+    expect(viewer.element('search-overlay').fills).toEqual([]);
+  });
+});

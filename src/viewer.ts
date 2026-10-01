@@ -486,6 +486,7 @@ function drawCanvasQuads(context: CanvasRenderingContext2D, quads: number[][], m
  * (i.e. a zero-length selection from a click).
  */
 function drawSelectionHighlight(): void {
+  if (selectionPage !== currentPage) return;
   if (selectionStartIdx < 0 || selectionEndIdx < 0 || selectionStartIdx === selectionEndIdx) return;
   const chars = buildCharList(currentPage);
   const quads = computeSelectionQuads(chars, selectionStartIdx, selectionEndIdx);
@@ -530,6 +531,14 @@ function loadDocument(data: Uint8Array, password?: string, settings?: { defaultZ
         return;
       }
     }
+
+    // A selection belongs to the old document, including deferred drag painting.
+    if (rafHandle !== null) { cancelAnimationFrame(rafHandle); rafHandle = null; }
+    isDragging = false;
+    selectionPageChars = [];
+    selectionStartIdx = -1;
+    selectionEndIdx = -1;
+    selectionPage = 0;
 
     doc = newDoc;
     totalPages = doc.countPages();
