@@ -67,11 +67,14 @@ Never put tokens in tracked files, command arguments, or logs.
 ## Tag release
 
 Update `package.json`, `package-lock.json`, and `CHANGELOG.md` for the next release, then commit the changes.
+The CHANGELOG section becomes the GitHub Release notes, so write it for users: open with one or two sentences on what improved, describe each item by its visible effect, and put changes users cannot see under `### Internal`.
+Preview the notes with `node scripts/release-notes.mjs X.Y.Z`; the script appends installation links and the full changelog link.
 Create and push a stable tag matching the package version exactly, such as `v1.0.1` for version `1.0.1`.
 
 The [release workflow](../.github/workflows/release.yml) publishes to both registries on `v*` tag pushes and rejects mismatched or prerelease versions.
 It type-checks, tests, builds, and packages one VSIX, then publishes that artifact independently to Visual Studio Marketplace and Open VSX.
-After both succeed, it creates a GitHub Release and attaches the same VSIX.
+After both succeed, it creates a GitHub Release from the CHANGELOG section, marks it Latest, and attaches the same VSIX.
+The package job fails before publishing if the CHANGELOG has no section for the tagged version.
 README links in release packages point to the release tag.
 
 If a registry fails, correct its credentials or namespace access and rerun failed jobs in GitHub Actions.
@@ -95,6 +98,7 @@ Choose **Run workflow** on `main` and enter an existing stable release tag, such
 The package job checks out that tag, validates it, and builds its VSIX.
 The Open VSX job uses the workflow revision's locked CLI so older tags still publish through trusted publishing.
 Manual runs skip Marketplace and attach the VSIX to the corresponding GitHub Release after Open VSX succeeds.
+Tags before v1.0.0 lack `scripts/release-notes.mjs`, so manual runs for them fail.
 The former `publish-open-vsx.yml` workflow has been consolidated into `release.yml` to use the same trusted publisher registration.
 
 ## Demo assets

@@ -2,99 +2,122 @@
 
 ## [1.0.0]
 
-First stable release. Versions 0.0.1 through 0.0.8 were pre-stable development releases; their packages remain available on [GitHub Releases](https://github.com/skrtk98/vscode-pdf-viewer/releases).
+The first stable release of MuPDF Viewer. It updates the bundled MuPDF engine with security fixes for crafted PDFs; there are no other user-visible changes from 0.0.8.
+Versions 0.0.1–0.0.8 were pre-stable development releases.
+
+### What's included
+- Read PDFs in a VS Code editor tab, rendered by MuPDF compiled to WebAssembly.
+- Zoom around the mouse cursor with `Ctrl+Wheel` or `Right mouse button+Wheel`.
+- Switch between continuous scrolling and single-page reading.
+- Reload automatically when the PDF changes on disk — keep LaTeX or Typst output beside its source.
+- Navigate with the outline, thumbnails, page numbers, and internal or external links.
+- Search incrementally, select and copy text, copy images as PNG, rotate pages, and open password-protected PDFs.
 
 ### Security
-- Update MuPDF from 1.27.0 to 1.28.1, picking up upstream fixes for crafted-PDF memory safety issues, including CVE-2026-25556 and CVE-2026-3308.
+- Updated MuPDF from 1.27.0 to 1.28.1, which includes upstream fixes for memory-safety issues triggered by crafted PDFs (including CVE-2026-25556 and CVE-2026-3308).
 
-### Changed
-- Update development dependencies with available security fixes.
+### Internal
+- Applied available security fixes to development dependencies.
 
 ---
 
 ## [0.0.8]
 
-### Fixed
-- Align rendering, search highlights, text selection, and image hit testing through shared MuPDF page transforms, including rotated pages and clipped tiles.
-- Activate internal and external PDF links correctly in both single-page and continuous-scroll views.
-- Copy rendered pixels before releasing their WASM memory and clean up failed tile renders.
-- Preserve resolution settings and user zoom across reloads and retain initial settings during password entry.
-- Clear selections and pending selection updates when replacing a document.
-- Clear search highlights in continuous view and prevent missed results when navigating during incremental search.
-- Authenticate encrypted documents in the thumbnail worker and ignore outdated worker initialization after reloads.
+A reliability release: highlights, selections, and link clicks now line up with what is drawn on screen — including rotated and zoomed pages — and reloading keeps your zoom.
 
-### Changed
-- Expand regression coverage to 60 tests, including actual MuPDF raster output, rotations, fractional zoom, reloads, links, search, and encrypted thumbnails.
+### Fixed
+- Search highlights, text selection, and image right-click targets line up with the rendered page, including rotated pages and fractional zoom levels.
+- Links work in both continuous-scroll and single-page views.
+- Reloading a changed PDF keeps your zoom level and resolution settings, including while you enter a password.
+- Old selections are cleared when the document is reloaded.
+- Search highlights clear correctly in continuous view, and moving between results while a search is still running no longer skips matches.
+- Thumbnails appear for password-protected PDFs and stay correct after rapid reloads.
+- Page rendering recovers cleanly when a tile fails to render.
+
+### Internal
+- Expanded regression tests to 60, covering real MuPDF rendering output, rotation, fractional zoom, reloads, links, search, and encrypted thumbnails.
 
 ---
 
 ## [0.0.7]
 
-### Changed
-- Reorganized English and Japanese READMEs around PDF reading and generated-document workflows, with screenshots and zoom/reload demos.
-- Improved Marketplace description, categories, keywords, and project links.
-- Build automatically before packaging and publish tagged releases through GitHub Actions.
+Documentation and release-process update; no changes to the viewer itself.
 
-### Fixed
-- Copy PNG data into an ArrayBuffer-backed view before creating clipboard images, resolving TypeScript Blob compatibility.
+### Changed
+- Rewrote the English and Japanese READMEs around reading PDFs and working with generated documents, with screenshots and zoom and reload demos.
+- Improved the Marketplace description, categories, keywords, and project links so the extension is easier to find.
+
+### Internal
+- Releases are now built, tested, and published automatically from tags through GitHub Actions.
+- Fixed a TypeScript type error in the image-copy code; behavior is unchanged.
 
 ---
 
 ## [0.0.6]
 
+Documentation update; no changes to the viewer itself.
+
 ### Changed
-- Updated README and README.ja to document right mouse button + scroll zoom, link navigation, and auto-reload, and fixed the outdated "PDF Viewer" title to "MuPDF Viewer".
+- The READMEs now cover zooming with the right mouse button, link navigation, and automatic reload, and use the current name "MuPDF Viewer".
 
 ---
 
 ## [0.0.5]
 
+Zoom without reaching for the keyboard.
+
 ### Added
-- Zoom with right mouse button + scroll, in addition to Ctrl + scroll.
+- Hold the right mouse button and scroll to zoom around the cursor, in addition to `Ctrl+Wheel`.
 
 ---
 
 ## [0.0.4]
 
+The extension now has its own icon.
+
 ### Added
-- Extension icon.
-- Marketplace keywords: `pdf`, `viewer`.
+- Extension icon in the Extensions view and Marketplace.
+- Marketplace keywords `pdf` and `viewer` so the extension shows up in searches.
 
 ---
 
 ## [0.0.3]
 
+Search highlights now appear on the matching text.
+
 ### Fixed
-- Search highlights rendered at wrong position due to coordinate-space mismatch between stext space (y-DOWN) and PDF user space (y-UP).
+- Search highlights were drawn at the wrong vertical position on the page.
 
 ---
 
 ## [0.0.2]
 
+The extension is now called MuPDF Viewer, and two reload and zoom bugs are fixed.
+
 ### Changed
-- Extension renamed from "PDF Previewer" to "MuPDF Viewer".
-- License changed from MIT to AGPL-3.0 to comply with MuPDF's license.
+- Renamed from "PDF Previewer" to "MuPDF Viewer".
+- License changed from MIT to AGPL-3.0, as required by MuPDF's license.
 
 ### Fixed
-- Auto-reload error ("key not in dict") when opening a PDF with outline items that have URI destinations.
-- Fit-width button incorrectly activating the fit-page button when fit-width and fit-page scales coincide.
+- Automatic reload no longer fails with a "key not in dict" error on PDFs whose outline contains web links.
+- The Fit Width button no longer also highlights Fit Page when both give the same zoom level.
 
 ---
 
-## [0.0.1] — Initial release
+## [0.0.1]
+
+The first public release: a MuPDF-powered PDF viewer inside VS Code.
 
 ### Added
-- PDF rendering via MuPDF WebAssembly.
-- Continuous scroll mode and single-page mode.
-- Zoom controls: mouse wheel, toolbar buttons, fit-width, fit-page, free-text input.
-- Text selection with clipboard copy (Ctrl+C).
-- Incremental full-text search with prev/next navigation.
-- Outline (bookmark) sidebar with collapsible tree.
-- Thumbnail sidebar rendered by a Web Worker.
-- Per-page 90° clockwise rotation.
+- PDF rendering with MuPDF compiled to WebAssembly, sharp on HiDPI and Retina displays.
+- Continuous scrolling and single-page modes.
+- Zoom with the mouse wheel, toolbar buttons, Fit Width, Fit Page, or a typed percentage.
+- Text selection and copy with `Ctrl+C`.
+- Incremental search with previous and next navigation.
+- Collapsible outline sidebar and a thumbnail sidebar.
+- Rotate individual pages by 90°.
 - Internal and external link navigation.
-- Right-click context menu to copy images as PNG.
-- Password-protected PDF support.
-- Auto-reload when the file changes on disk.
-- HiDPI / Retina rendering with device-pixel-ratio tracking.
-- `pdfViewer.defaultZoom` and `pdfViewer.renderResolution` settings.
+- Copy images as PNG from the right-click menu.
+- Password-protected PDFs.
+- Automatic reload when the file changes on disk.
+- Settings `pdfViewer.defaultZoom` and `pdfViewer.renderResolution`.

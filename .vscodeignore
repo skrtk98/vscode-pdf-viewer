@@ -3,6 +3,7 @@ node_modules/**
 src/**
 test/**
 esbuild.mjs
+scripts/**
 tsconfig.json
 **/*.ts
 **/*.map

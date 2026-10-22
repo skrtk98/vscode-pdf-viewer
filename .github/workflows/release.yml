@@ -70,10 +70,16 @@ jobs:
       - run: npm test
       - name: Build and package
         run: npm run package -- --out mupdf-viewer.vsix --baseContentUrl "https://github.com/${GITHUB_REPOSITORY}/blob/${RELEASE_TAG}" --baseImagesUrl "https://github.com/${GITHUB_REPOSITORY}/raw/${RELEASE_TAG}"
+      # Written after packaging so it stays out of the VSIX; fails before publishing
+      # anything if the CHANGELOG lacks this release.
+      - name: Prepare release notes
+        run: node scripts/release-notes.mjs "${RELEASE_TAG#v}" > release-notes.md
       - uses: actions/upload-artifact@v4
         with:
           name: extension-vsix
-          path: mupdf-viewer.vsix
+          path: |
+            mupdf-viewer.vsix
+            release-notes.md
           if-no-files-found: error
 
   publish-marketplace:
@@ -158,6 +164,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes --title "$RELEASE_TAG" --latest
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --notes-file release-notes.md --title "$RELEASE_TAG" --latest
           fi
           gh release upload "$RELEASE_TAG" mupdf-viewer.vsix --repo "$GITHUB_REPOSITORY" --clobber
