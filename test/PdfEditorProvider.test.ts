@@ -92,7 +92,7 @@ vi.mock('vscode', () => {
       parse: (url: string) => ({ toString: () => url }),
       file: (p: string) => ({ fsPath: p, toString: () => p }),
     },
-    RelativePattern: vi.fn().mockReturnValue({}),
+    RelativePattern: vi.fn(function () { return {}; }),
     mockWebviewPanel,
   };
 });

@@ -54,7 +54,7 @@ For Open VSX, use [Trusted Publishing](https://github.com/eclipse-openvsx/openvs
 1. Sign in to Open VSX, accept the Publisher Agreement, and ensure your account is an **owner** of the `skrtk98` namespace. Contributor access is insufficient for registering a trusted publisher.
 2. In [Settings → Trusted Publishers](https://open-vsx.org/user-settings/trusted-publishers), register extension `mupdf-viewer` with provider GitHub Actions, owner `skrtk98`, repository `vscode-pdf-viewer`, and workflow filename `release.yml`.
 3. Leave the environment field empty for the current workflow. If you restrict the registration to an environment, add that exact `environment:` to both `verify-open-vsx` and `publish-open-vsx` jobs and configure its branch/tag rules accordingly.
-4. The workflow uses locked `ovsx` 1.2.0, grants `id-token: write` only to the Open VSX jobs, and publishes with `--trusted-publishing`. It does not pass `OVSX_PAT` or fall back to PAT authentication.
+4. The workflow uses locked `ovsx` 1.3.0, grants `id-token: write` only to the Open VSX jobs, and publishes with `--trusted-publishing`. It does not pass `OVSX_PAT` or fall back to PAT authentication.
 
 The extension and namespace already exist. Trusted publishing requires an active version and cannot bootstrap a new extension or create a namespace.
 A single trusted publisher can be registered per extension, so both tag and manual publication use `release.yml`.
