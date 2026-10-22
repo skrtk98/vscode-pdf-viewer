@@ -2,7 +2,7 @@
   "name": "mupdf-viewer",
   "displayName": "MuPDF Viewer",
   "description": "MuPDF/WASM PDF viewer for VS Code with mouse-centered zoom, search, navigation, and auto-reload.",
-  "version": "0.0.8",
+  "version": "1.0.0",
   "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.85.0"
@@ -68,7 +68,7 @@
     "package": "vsce package --no-dependencies"
   },
   "dependencies": {
-    "mupdf": "^1.27.0"
+    "mupdf": "^1.28.1"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

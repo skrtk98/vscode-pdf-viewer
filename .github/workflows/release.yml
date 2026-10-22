@@ -158,6 +158,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes --title "$RELEASE_TAG"
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes --title "$RELEASE_TAG" --latest
           fi
           gh release upload "$RELEASE_TAG" mupdf-viewer.vsix --repo "$GITHUB_REPOSITORY" --clobber

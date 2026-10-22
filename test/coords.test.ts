@@ -16,7 +16,7 @@ describe('page transforms', () => {
         const page = doc.loadPage(0);
         const geometry = createPageTransform(mupdf, page.getBounds(), 1.75, rotation);
         const pixmap = page.toPixmap(geometry.matrix, mupdf.ColorSpace.DeviceRGB, false);
-        const quad = page.search('Hello')[0][0];
+        const quad = page.search('Hello', '')[0][0];
         const points = [0, 2, 4, 6].map(i => transformPoint(geometry.matrix, quad[i], quad[i + 1]));
         const xs = points.map(p => p.x), ys = points.map(p => p.y);
         let ink = 0;

@@ -67,7 +67,7 @@ Never put tokens in tracked files, command arguments, or logs.
 ## Tag release
 
 Update `package.json`, `package-lock.json`, and `CHANGELOG.md` for the next release, then commit the changes.
-Create and push a stable tag matching the package version exactly, such as `v0.0.9` for version `0.0.9`.
+Create and push a stable tag matching the package version exactly, such as `v1.0.1` for version `1.0.1`.
 
 The [release workflow](../.github/workflows/release.yml) publishes to both registries on `v*` tag pushes and rejects mismatched or prerelease versions.
 It type-checks, tests, builds, and packages one VSIX, then publishes that artifact independently to Visual Studio Marketplace and Open VSX.

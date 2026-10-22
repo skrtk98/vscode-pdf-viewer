@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.0.0]
+
+First stable release. Versions 0.0.1 through 0.0.8 were pre-stable development releases; their packages remain available on [GitHub Releases](https://github.com/skrtk98/vscode-pdf-viewer/releases).
+
+### Security
+- Update MuPDF from 1.27.0 to 1.28.1, picking up upstream fixes for crafted-PDF memory safety issues, including CVE-2026-25556 and CVE-2026-3308.
+
+### Changed
+- Update development dependencies with available security fixes.
+
+---
+
 ## [0.0.8]
 
 ### Fixed

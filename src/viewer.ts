@@ -940,7 +940,7 @@ function searchPageNow(pageIndex: number): void {
   const previousEnd = searchHits.slice(0, pageIndex).reduce((sum, hits) => sum + hits.length, 0) + previousCount;
   const page = doc.loadPage(pageIndex);
   try {
-    searchHits[pageIndex] = page.search(searchQuery);
+    searchHits[pageIndex] = page.search(searchQuery, '');
   } catch (_e) {
     searchHits[pageIndex] = [];
   } finally {
