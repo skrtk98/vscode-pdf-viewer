@@ -38,7 +38,7 @@ The [authentication verification workflow](../.github/workflows/verify-marketpla
 5. In Marketplace publisher `skrtk98`, open **Members** and add that identity as a **Contributor**.
 6. Run the verification workflow again with `verify_permissions` checked. `vsce verify-pat skrtk98 --azure-credential` checks publishing rights without uploading a package, despite the historical command name.
 7. The `publish-marketplace` job in `release.yml` uses environment `marketplace`, job permission `id-token: write`, and the same Azure Login step. It verifies publishing rights and publishes with `--azure-credential --packagePath mupdf-viewer.vsix --skip-duplicate`.
-8. Configuration pushes to `main` exercise this release job using version 0.0.8 downloaded directly from Marketplace. Success followed by duplicate skipping verifies the publishing authentication path. After success, remove any unused `VSCE_PAT` secret and revoke its token if not used elsewhere.
+8. Configuration pushes to `main` exercise this release job using version 1.0.0 downloaded directly from Marketplace. Success followed by duplicate skipping verifies the publishing authentication path. After success, remove any unused `VSCE_PAT` secret and revoke its token if not used elsewhere.
 
 The verification workflow is manual and does not publish or modify extensions.
 The release job has no PAT fallback. Keep the federated subject aligned with the actual GitHub token if the repository OIDC subject configuration changes.
@@ -86,12 +86,12 @@ Check the Marketplace listing and GitHub Release asset as well.
 Pushing changes to `release.yml`, `package.json`, or `package-lock.json` on `main` runs `verify-open-vsx` and `publish-marketplace` against already published packages.
 It downloads the latest already-published VSIX from Open VSX and submits it with `--trusted-publishing --skip-duplicate`.
 `ovsx` exchanges the OIDC token before attempting the upload; success followed by “already published” confirms the registered workflow can authenticate without creating a new version.
-The Marketplace job downloads its existing 0.0.8 VSIX, verifies Entra publishing rights, and invokes publication with duplicate skipping. Neither check packages the development checkout or creates a new version.
+The Marketplace job downloads its existing 1.0.0 VSIX, verifies Entra publishing rights, and invokes publication with duplicate skipping. Neither check packages the development checkout or creates a new version.
 
 ## Publishing an existing release to Open VSX
 
 Use the [Release workflow](../.github/workflows/release.yml) from the GitHub Actions tab.
-Choose **Run workflow** on `main` and enter an existing stable release tag, such as `v0.0.8`.
+Choose **Run workflow** on `main` and enter an existing stable release tag, such as `v1.0.0`.
 The package job checks out that tag, validates it, and builds its VSIX.
 The Open VSX job uses the workflow revision's locked CLI so older tags still publish through trusted publishing.
 Manual runs skip Marketplace and attach the VSIX to the corresponding GitHub Release after Open VSX succeeds.
