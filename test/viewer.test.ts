@@ -86,6 +86,122 @@ describe('viewer settings', () => {
 });
 
 
+describe('document loading', () => {
+  const encrypted = () => {
+    const doc = mupdf.Document.openDocument(readFileSync('test/fixtures/simple.pdf'), 'application/pdf') as mupdf.PDFDocument;
+    const buffer = doc.saveToBuffer('encrypt=aes-256,user-password=secret,owner-password=owner');
+    const bytes = new Uint8Array(buffer.asUint8Array());
+    buffer.destroy(); doc.destroy();
+    return bytes;
+  };
+  const fixture = (name: string) => new Uint8Array(readFileSync(`test/fixtures/${name}.pdf`));
+  const gate = () => { let open!: () => void; const promise = new Promise<void>(r => { open = r; }); return { promise, open }; };
+
+  it('fetches the PDF with a range request and applies the settings sent with it', async () => {
+    viewer = createViewer();
+    viewer.served.set('pdf:a', fixture('simple'));
+    await viewer.loadUrl('pdf:a', { loadId: 0, defaultZoom: 1.5 });
+    expect(viewer.requests).toEqual([{ url: 'pdf:a', headers: { Range: 'bytes=0-' } }]);
+    expect(viewer.evaluate('totalPages')).toBe(1);
+    expect(viewer.evaluate('scale')).toBe(1.5);
+    expect(viewer.messages).toEqual([]);
+    expect(viewer.status.some(t => /^Loading PDF… [\d.]+ MB \/ [\d.]+ MB$/.test(t))).toBe(true);
+  });
+
+  it('asks the host for the bytes when the fetch fails, keeping the settings', async () => {
+    viewer = createViewer();
+    viewer.served.set('pdf:a', new Error('blocked'));
+    await viewer.loadUrl('pdf:a', { loadId: 0, defaultZoom: 1.5 });
+    expect(viewer.messages).toEqual([{ type: 'fetchFailed', loadId: 0 }]);
+    await viewer.loadData(fixture('simple'), { loadId: 0 });
+    expect(viewer.evaluate('totalPages')).toBe(1);
+    expect(viewer.evaluate('scale')).toBe(1.5);
+  });
+
+  it('discards a fetch that completes after a newer load', async () => {
+    viewer = createViewer();
+    const slow = gate();
+    viewer.served.set('pdf:old', { bytes: fixture('multi-page'), gate: slow.promise });
+    viewer.served.set('pdf:new', fixture('simple'));
+    const old = viewer.loadUrl('pdf:old', { loadId: 0 });
+    await viewer.loadUrl('pdf:new', { loadId: 1 });
+    slow.open();
+    await old;
+    expect(viewer.evaluate('totalPages')).toBe(1);
+    expect(viewer.messages).toEqual([]);
+  });
+
+  it('ignores bytes for an older file version arriving after a newer one', async () => {
+    viewer = createViewer();
+    await viewer.loadData(fixture('multi-page'), { loadId: 1 });
+    await viewer.loadData(fixture('simple'), { loadId: 0 });
+    expect(viewer.evaluate('totalPages')).toBe(5);
+  });
+
+  it('opens an encrypted PDF with the entered password without fetching it again', async () => {
+    viewer = createViewer();
+    viewer.served.set('pdf:a', encrypted());
+    await viewer.loadUrl('pdf:a', { loadId: 0 });
+    expect(viewer.messages).toEqual([{ type: 'requestPassword', loadId: 0 }]);
+    await viewer.window.dispatch('message', { data: { type: 'password', loadId: 0, password: 'secret' } });
+    expect(viewer.requests).toHaveLength(1);
+    expect(viewer.evaluate('totalPages')).toBe(1);
+    expect(viewer.evaluate('pendingPassword')).toBeNull();
+  });
+
+  it('does not apply a password to a file version that is being replaced', async () => {
+    viewer = createViewer();
+    viewer.served.set('pdf:a', encrypted());
+    await viewer.loadUrl('pdf:a', { loadId: 0 });
+    const slow = gate();
+    viewer.served.set('pdf:b', { bytes: encrypted(), gate: slow.promise });
+    const reload = viewer.loadUrl('pdf:b', { loadId: 1 });
+    await viewer.window.dispatch('message', { data: { type: 'password', loadId: 0, password: 'secret' } });
+    expect(viewer.evaluate('doc')).toBeNull();
+    slow.open();
+    await reload;
+    expect(viewer.messages).toEqual([{ type: 'requestPassword', loadId: 0 }, { type: 'requestPassword', loadId: 1 }]);
+  });
+
+  it('accepts the correct password after an empty one', async () => {
+    viewer = createViewer();
+    viewer.served.set('pdf:a', encrypted());
+    await viewer.loadUrl('pdf:a', { loadId: 0 });
+    await viewer.window.dispatch('message', { data: { type: 'password', loadId: 0, password: '' } });
+    await viewer.window.dispatch('message', { data: { type: 'password', loadId: 0, password: 'secret' } });
+    expect(viewer.evaluate('totalPages')).toBe(1);
+    expect(viewer.messages.filter(m => m.type === 'error')).toEqual([]);
+  });
+
+  it('cancels the transfer when the body exceeds its declared size', async () => {
+    viewer = createViewer();
+    let cancelled = false;
+    const bytes = fixture('simple');
+    viewer.evaluate('globalThis').fetch = async () => new Response(new ReadableStream({
+      pull(controller) { controller.enqueue(bytes); },
+      cancel() { cancelled = true; },
+    }), { status: 206, headers: { 'Content-Range': `bytes 0-9/10` } });
+    await viewer.loadUrl('pdf:a', { loadId: 0 });
+    expect(cancelled).toBe(true);
+    expect(viewer.messages).toEqual([{ type: 'fetchFailed', loadId: 0 }]);
+  });
+
+  it('releases the downloaded bytes once an unencrypted PDF opens', async () => {
+    viewer = createViewer();
+    viewer.served.set('pdf:a', fixture('simple'));
+    await viewer.loadUrl('pdf:a', { loadId: 0 });
+    expect(viewer.evaluate('pendingPassword')).toBeNull();
+  });
+
+  it('shows a message without inline styles when the PDF has no outline', async () => {
+    viewer = createViewer();
+    await viewer.load('simple');
+    const panel = viewer.element('outline-panel');
+    expect(panel.children.map(c => [c.className, c.textContent])).toEqual([['outline-empty', 'No outline']]);
+  });
+});
+
+
 describe('document selection lifecycle', () => {
   it('drops selected text and pending drag painting when the document reloads', async () => {
     viewer = createViewer();

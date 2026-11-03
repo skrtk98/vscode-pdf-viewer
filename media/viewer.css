@@ -152,6 +152,12 @@ body {
   padding: 4px;
 }
 
+.outline-empty {
+  padding: 8px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
 #thumbs-sidebar {
   width: 140px;
   min-width: 0;

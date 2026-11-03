@@ -4,20 +4,18 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 
 /**
- * Minimal custom document that holds the raw PDF bytes for a single file.
+ * Minimal custom document that identifies a single PDF file.
  *
  * VS Code calls {@link PdfEditorProvider.openCustomDocument} once per URI and
  * passes the resulting `PdfDocument` to every
  * {@link PdfEditorProvider.resolveCustomEditor} call for that file.
+ * The bytes are not held here: the webview fetches the file itself.
  */
 class PdfDocument implements vscode.CustomDocument {
   readonly uri: vscode.Uri;
-  /** Raw bytes of the PDF file; updated in place when the file changes on disk. */
-  data: Uint8Array;
 
-  constructor(uri: vscode.Uri, data: Uint8Array) {
+  constructor(uri: vscode.Uri) {
     this.uri = uri;
-    this.data = data;
   }
 
   dispose(): void {}
@@ -29,8 +27,8 @@ class PdfDocument implements vscode.CustomDocument {
  * Registered for the `pdfViewer.pdfEditor` view type in `package.json`.
  * Each opened PDF gets its own {@link PdfDocument} and webview panel.  The
  * provider injects viewer assets (HTML / CSS / JS / WASM) into the webview,
- * forwards the PDF bytes on startup, and reloads the viewer whenever the
- * underlying file changes on disk.
+ * tells it where to fetch the PDF on startup, and reloads the viewer whenever
+ * the underlying file changes on disk.
  */
 export class PdfEditorProvider implements vscode.CustomReadonlyEditorProvider<PdfDocument> {
   private readonly context: vscode.ExtensionContext;
@@ -40,22 +38,21 @@ export class PdfEditorProvider implements vscode.CustomReadonlyEditorProvider<Pd
   }
 
   /**
-   * Read the PDF from disk and wrap it in a {@link PdfDocument}.
+   * Wrap the PDF's URI in a {@link PdfDocument}.
    *
    * VS Code calls this once per URI before the first editor panel is created.
    *
    * @param uri - URI of the PDF file being opened.
    * @param _openContext - Unused backup/restore context.
    * @param _token - Cancellation token.
-   * @returns A new `PdfDocument` containing the file's raw bytes.
+   * @returns A new `PdfDocument` for the file.
    */
   async openCustomDocument(
     uri: vscode.Uri,
     _openContext: vscode.CustomDocumentOpenContext,
     _token: vscode.CancellationToken
   ): Promise<PdfDocument> {
-    const data = await vscode.workspace.fs.readFile(uri);
-    return new PdfDocument(uri, data);
+    return new PdfDocument(uri);
   }
 
   /**
@@ -63,10 +60,15 @@ export class PdfEditorProvider implements vscode.CustomReadonlyEditorProvider<Pd
    *
    * Injects a Content Security Policy nonce, resolves all asset URIs,
    * expands the `viewer.html` template, and sets up message handlers for:
-   * - `ready` — sends `load` with PDF bytes and user settings
+   * - `ready` — sends `load` with the PDF's webview URL and user settings
+   * - `fetchFailed` — sends `load` with the PDF bytes instead
    * - `openExternal` — opens a URI in the default browser
-   * - `requestPassword` — prompts the user and resends `load` with the password
+   * - `requestPassword` — prompts the user and sends `password`
    * - `error` — surfaces the message as a VS Code error notification
+   *
+   * Sending a URL rather than the bytes matters over Remote-SSH, where a large
+   * `postMessage` payload stalls the extension host for minutes, while the
+   * webview's resource loader streams the same file quickly.
    *
    * Also creates a file-system watcher that reloads the viewer whenever the
    * PDF file is modified on disk (e.g. after a LaTeX recompile).
@@ -81,10 +83,13 @@ export class PdfEditorProvider implements vscode.CustomReadonlyEditorProvider<Pd
     _token: vscode.CancellationToken
   ): Promise<void> {
     const webview = webviewPanel.webview;
+    // Only file URIs can be served through asWebviewUri; other schemes get bytes.
+    const fetchable = document.uri.scheme === 'file';
     webview.options = {
       enableScripts: true,
       localResourceRoots: [
         vscode.Uri.joinPath(this.context.extensionUri, 'media'),
+        ...(fetchable ? [vscode.Uri.joinPath(document.uri, '..')] : []),
       ],
     };
 
@@ -112,6 +117,26 @@ export class PdfEditorProvider implements vscode.CustomReadonlyEditorProvider<Pd
 
     const disposables: vscode.Disposable[] = [];
     let disposed = false;
+    // Identifies the file version a message refers to. Bumped on each reload so
+    // that replies to an older load (fallback bytes, passwords) are discarded.
+    let loadId = 0;
+
+    const loadMessage = async (): Promise<Record<string, unknown>> => {
+      const id = loadId;
+      if (fetchable) {
+        return { type: 'load', loadId: id, url: webview.asWebviewUri(document.uri).toString() };
+      }
+      return { type: 'load', loadId: id, data: await vscode.workspace.fs.readFile(document.uri) };
+    };
+
+    const sendBytes = async (id: number): Promise<void> => {
+      try {
+        const data = await vscode.workspace.fs.readFile(document.uri);
+        if (!disposed && id === loadId) await webview.postMessage({ type: 'load', loadId: id, data });
+      } catch (e) {
+        vscode.window.showErrorMessage(`PDF Viewer: Failed to read PDF: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    };
 
     const messageHandler = webview.onDidReceiveMessage(async (msg) => {
       if (disposed) return;
@@ -120,14 +145,17 @@ export class PdfEditorProvider implements vscode.CustomReadonlyEditorProvider<Pd
           const config = vscode.workspace.getConfiguration('pdfViewer');
           const defaultZoom = config.get<number>('defaultZoom', 1.0);
           const renderResolution = config.get<number>('renderResolution', 96);
-          await webview.postMessage({
-            type: 'load',
-            data: document.data,
-            defaultZoom,
-            renderResolution,
-          });
+          try {
+            await webview.postMessage({ ...(await loadMessage()), defaultZoom, renderResolution });
+          } catch (e) {
+            vscode.window.showErrorMessage(`PDF Viewer: Failed to read PDF: ${e instanceof Error ? e.message : String(e)}`);
+          }
           break;
         }
+
+        case 'fetchFailed':
+          if (msg.loadId === loadId) await sendBytes(loadId);
+          break;
 
         case 'openExternal':
           await vscode.env.openExternal(vscode.Uri.parse(msg.url));
@@ -140,7 +168,7 @@ export class PdfEditorProvider implements vscode.CustomReadonlyEditorProvider<Pd
             ignoreFocusOut: true,
           });
           if (password !== undefined) {
-            await webview.postMessage({ type: 'load', data: document.data, password });
+            await webview.postMessage({ type: 'password', loadId: msg.loadId, password });
           }
           break;
         }
@@ -161,10 +189,9 @@ export class PdfEditorProvider implements vscode.CustomReadonlyEditorProvider<Pd
 
     const onDidChange = watcher.onDidChange(async () => {
       if (disposed) return;
+      loadId++;
       try {
-        const newData = await vscode.workspace.fs.readFile(document.uri);
-        document.data = newData;
-        await webview.postMessage({ type: 'load', data: newData });
+        await webview.postMessage(await loadMessage());
       } catch (_e) {
       }
     });

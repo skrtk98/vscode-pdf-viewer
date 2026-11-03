@@ -9,6 +9,13 @@ export function createViewer() {
   const messages: any[] = [];
   const workerMessages: any[] = [];
   const thumbnailFetches: (() => void)[] = [];
+  /**
+   * PDF responses by URL, answered as VS Code answers `Range: bytes=0-`.
+   * `gate` holds the second half of the body until the test releases it.
+   */
+  const served = new Map<string, Uint8Array | Error | { bytes: Uint8Array; gate: Promise<void> }>();
+  const requests: { url: string; headers: Record<string, string> }[] = [];
+  const status: string[] = [];
   const clipboard: string[] = [];
   const idle = new Map<number, (deadline: { timeRemaining(): number }) => void>();
   const frames = new Map<number, () => void>();
@@ -80,7 +87,30 @@ export function createViewer() {
     ImageData: class { constructor(public data: Uint8ClampedArray, public width: number, public height: number) {} },
     acquireVsCodeApi: () => ({ postMessage: (msg: any) => messages.push(msg) }),
     navigator: { clipboard: { writeText: async (text: string) => { clipboard.push(text); } } },
-    fetch: () => new Promise(resolve => { thumbnailFetches.push(() => resolve({ blob: async () => ({}) })); }),
+    fetch: async (url: string, init?: { signal?: AbortSignal; headers?: Record<string, string> }) => {
+      const entry = served.get(url);
+      if (entry === undefined) {
+        return new Promise(resolve => { thumbnailFetches.push(() => resolve({ blob: async () => ({}) })); });
+      }
+      requests.push({ url, headers: init?.headers ?? {} });
+      if (entry instanceof Error) throw entry;
+      const { bytes, gate } = entry instanceof Uint8Array ? { bytes: entry, gate: Promise.resolve() } : entry;
+      const half = bytes.byteLength >> 1;
+      const signal = init?.signal;
+      const body = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          controller.enqueue(bytes.slice(0, half));
+          await gate;
+          if (signal?.aborted) controller.error(signal.reason);
+          else { controller.enqueue(bytes.slice(half)); controller.close(); }
+        },
+      });
+      return new Response(body, {
+        status: 206,
+        headers: { 'Content-Range': `bytes 0-${bytes.byteLength - 1}/${bytes.byteLength}` },
+      });
+    },
+    AbortController, Response, ReadableStream, Date,
     URL: { createObjectURL: () => 'blob:thumbnail-worker', revokeObjectURL() {} },
     Worker: class extends Element {
       postMessage(message: any) { workerMessages.push(message); }
@@ -94,14 +124,19 @@ export function createViewer() {
   runInContext(ts.transpile(coords + '\n' + viewer, { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None }), context);
   const evaluate = (code: string): any => runInContext(code, context);
   evaluate('mupdf = engine;');
+  const statusEl = element('status');
+  Object.defineProperty(statusEl, 'textContent', { set(text: string) { status.push(text); }, get() { return status.at(-1) ?? ''; } });
   return {
-    evaluate, element, window, document, messages, clipboard, frames, workerMessages,
+    evaluate, element, window, document, messages, clipboard, frames, workerMessages, served, status, requests,
     async finishThumbnailFetch(index: number) {
       thumbnailFetches[index]();
       for (let i = 0; i < 6; i++) await Promise.resolve();
     },
     async loadData(data: Uint8Array, extra: Record<string, unknown> = {}) {
       await window.dispatch('message', { data: { type: 'load', data, ...extra } });
+    },
+    async loadUrl(url: string, extra: Record<string, unknown> = {}) {
+      await window.dispatch('message', { data: { type: 'load', url, ...extra } });
     },
     async load(fixture: string, extra: Record<string, unknown> = {}) {
       await window.dispatch('message', { data: { type: 'load', data: readFileSync(`test/fixtures/${fixture}.pdf`), ...extra } });

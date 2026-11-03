@@ -44,8 +44,8 @@ vi.mock('vscode', () => {
     options: {} as Record<string, unknown>,
     html: '',
     cspSource: 'vscode-webview-resource:',
-    asWebviewUri: (uri: { fsPath?: string; toString: () => string }) => ({
-      toString: () => `vscode-resource://${uri.fsPath ?? uri.toString()}`,
+    asWebviewUri: (uri: { toString: () => string }) => ({
+      toString: () => `vscode-resource://${uri.toString()}`,
     }),
     postMessage: mockPostMessage,
     onDidReceiveMessage: (cb: (msg: unknown) => void) => {
@@ -127,7 +127,7 @@ const makeContext = () => ({
   subscriptions: [],
 });
 
-async function setup(data: Uint8Array) {
+async function setup(data: Uint8Array, scheme = 'file') {
   vi.mocked(vscode.workspace.fs.readFile).mockResolvedValue(
     data as unknown as Uint8Array & { buffer: ArrayBuffer }
   );
@@ -138,10 +138,12 @@ async function setup(data: Uint8Array) {
   mockPostMessage.mockClear();
   mockOpenExternal.mockClear();
   mockShowInputBox.mockClear();
+  vi.mocked(vscode.workspace.fs.readFile).mockClear();
 
   const context = makeContext();
   const provider = new PdfEditorProvider(context as unknown as vscode.ExtensionContext);
   const uri = {
+    scheme,
     fsPath: '/tmp/test.pdf',
     toString: () => '/tmp/test.pdf',
     path: '/tmp/test.pdf',
@@ -156,7 +158,7 @@ async function setup(data: Uint8Array) {
   const panel = (vscode as unknown as { mockWebviewPanel: vscode.WebviewPanel }).mockWebviewPanel;
   await provider.resolveCustomEditor(doc, panel, {} as vscode.CancellationToken);
 
-  return { provider, doc };
+  return { provider, doc, panel };
 }
 
 async function triggerReady() {
@@ -166,35 +168,91 @@ async function triggerReady() {
 }
 
 describe('TC-INT-01: load message sent on ready', () => {
-  it('sends load message with correct data and settings', async () => {
-    const data = new Uint8Array([0x25, 0x50, 0x44, 0x46]);
-    await setup(data);
+  it('sends the webview URL of a file PDF with settings instead of its bytes', async () => {
+    await setup(new Uint8Array([0x25, 0x50, 0x44, 0x46]));
     await triggerReady();
 
-    expect(mockPostMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'load', data: expect.any(Uint8Array) })
-    );
     const call = mockPostMessage.mock.calls[0][0];
-    expect(call.data).toEqual(data);
+    expect(call).toMatchObject({ type: 'load', loadId: 0, url: 'vscode-resource:///tmp/test.pdf' });
+    expect(call.data).toBeUndefined();
     expect(typeof call.defaultZoom).toBe('number');
     expect(typeof call.renderResolution).toBe('number');
+    expect(vscode.workspace.fs.readFile).not.toHaveBeenCalled();
+  });
+
+  it('lets the webview read the PDF directory', async () => {
+    const { panel } = await setup(new Uint8Array([1]));
+    const roots = (panel.webview.options.localResourceRoots ?? []).map(String);
+    expect(roots).toContain(path.join('/tmp/test.pdf', '..'));
+  });
+
+  it('sends bytes for URIs the webview cannot fetch', async () => {
+    const data = new Uint8Array([0x25, 0x50, 0x44, 0x46]);
+    await setup(data, 'untitled');
+    await triggerReady();
+
+    const call = mockPostMessage.mock.calls[0][0];
+    expect(call).toMatchObject({ type: 'load', loadId: 0, data });
+    expect(call.url).toBeUndefined();
   });
 });
 
-describe('TC-INT-02: load message is a copy (not transferred)', () => {
-  it('document data is still intact after postMessage', async () => {
+describe('TC-INT-02: fetch failure falls back to bytes', () => {
+  it('sends the file bytes after fetchFailed', async () => {
     const data = new Uint8Array([0x25, 0x50, 0x44, 0x46]);
-    const { doc } = await setup(data);
+    await setup(data);
     await triggerReady();
+    mockPostMessage.mockClear();
 
-    expect(doc.data.byteLength).toBe(4);
+    await getOnDidReceiveCb()?.({ type: 'fetchFailed', loadId: 0 });
+
+    expect(mockPostMessage).toHaveBeenCalledWith({ type: 'load', loadId: 0, data });
+  });
+
+  it('ignores fetchFailed for a file version that was already replaced', async () => {
+    await setup(new Uint8Array([1]));
+    await triggerReady();
+    await getOnDidChangeCb()?.({});
+    mockPostMessage.mockClear();
+
+    await getOnDidReceiveCb()?.({ type: 'fetchFailed', loadId: 0 });
+
+    expect(mockPostMessage).not.toHaveBeenCalled();
+  });
+
+  it('drops fallback bytes when the file changes while they are being read', async () => {
+    await setup(new Uint8Array([1]));
+    await triggerReady();
+    let finishRead!: (data: Uint8Array) => void;
+    vi.mocked(vscode.workspace.fs.readFile).mockReturnValueOnce(
+      new Promise(resolve => { finishRead = resolve as (data: Uint8Array) => void; }) as never
+    );
+    const fallback = getOnDidReceiveCb()?.({ type: 'fetchFailed', loadId: 0 });
+    await getOnDidChangeCb()?.({});
+    mockPostMessage.mockClear();
+
+    finishRead(new Uint8Array([9]));
+    await fallback;
+
+    expect(mockPostMessage).not.toHaveBeenCalled();
   });
 });
 
 describe('TC-INT-03: FileSystemWatcher triggers re-load', () => {
-  it('sends new data when file changes', async () => {
-    const dataA = new Uint8Array([1, 2, 3]);
-    await setup(dataA);
+  it('sends the URL with a new loadId when the file changes', async () => {
+    await setup(new Uint8Array([1, 2, 3]));
+    await triggerReady();
+    mockPostMessage.mockClear();
+
+    await getOnDidChangeCb()?.({});
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(mockPostMessage).toHaveBeenCalledWith({ type: 'load', loadId: 1, url: 'vscode-resource:///tmp/test.pdf' });
+  });
+
+  it('sends new bytes for URIs the webview cannot fetch', async () => {
+    await setup(new Uint8Array([1, 2, 3]), 'untitled');
     await triggerReady();
     mockPostMessage.mockClear();
 
@@ -206,10 +264,7 @@ describe('TC-INT-03: FileSystemWatcher triggers re-load', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(mockPostMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'load', data: dataB })
-    );
-    expect(mockPostMessage.mock.calls[0][0].data).not.toEqual(dataA);
+    expect(mockPostMessage).toHaveBeenCalledWith({ type: 'load', loadId: 1, data: dataB });
   });
 });
 
@@ -242,21 +297,19 @@ describe('TC-INT-05: openExternal message relay', () => {
   });
 });
 
-describe('TC-INT-06: requestPassword → load with password', () => {
-  it('sends load with password after showInputBox', async () => {
+describe('TC-INT-06: requestPassword → password', () => {
+  it('sends only the password after showInputBox', async () => {
     const data = new Uint8Array([1, 2]);
     await setup(data);
     await triggerReady();
     mockPostMessage.mockClear();
 
     mockShowInputBox.mockResolvedValue('secret');
-    await getOnDidReceiveCb()?.({ type: 'requestPassword' });
+    await getOnDidReceiveCb()?.({ type: 'requestPassword', loadId: 0 });
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(mockPostMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'load', password: 'secret' })
-    );
+    expect(mockPostMessage).toHaveBeenCalledWith({ type: 'password', loadId: 0, password: 'secret' });
   });
 });

@@ -504,32 +504,30 @@ function drawSelectionHighlight(): void {
  *
  * @param data - Raw PDF file bytes.
  * @param password - Optional decryption password.
- * @param settings - Optional viewer settings from the host (`defaultZoom`, `renderResolution`).
+ * @returns `'password'` when the document waits for a password, `'failed'` on
+ *   an error or a wrong password, otherwise `'opened'`.
  */
-function loadDocument(data: Uint8Array, password?: string, settings?: { defaultZoom?: number; renderResolution?: number }): void {
-  if (!mupdf) return;
+function loadDocument(data: Uint8Array, password?: string): 'opened' | 'password' | 'failed' {
+  if (!mupdf) return 'failed';
   if (doc) {
     doc.destroy();
     doc = null;
   }
-
-  if (settings?.defaultZoom !== undefined) defaultSettings.defaultZoom = settings.defaultZoom;
-  if (settings?.renderResolution !== undefined) defaultSettings.renderResolution = settings.renderResolution;
 
   try {
     const newDoc = mupdf.Document.openDocument(data, 'application/pdf');
 
     if (newDoc.needsPassword()) {
       if (!password) {
-        vscode.postMessage({ type: 'requestPassword' });
+        vscode.postMessage({ type: 'requestPassword', loadId: activeLoadId });
         newDoc.destroy();
-        return;
+        return 'password';
       }
       const result = newDoc.authenticatePassword(password);
       if (result === 0) {
         vscode.postMessage({ type: 'error', message: 'Incorrect PDF password.' });
         newDoc.destroy();
-        return;
+        return 'failed';
       }
     }
 
@@ -568,7 +566,12 @@ function loadDocument(data: Uint8Array, password?: string, settings?: { defaultZ
       const outlineNodes = buildOutlineTree(rawOutline);
       renderOutlineDOM(outlineNodes, outlinePanel, 0);
     } else {
-      outlinePanel.innerHTML = '<div style="padding:8px;font-size:11px;color:var(--vscode-descriptionForeground)">No outline</div>';
+      // Built with DOM APIs: the CSP blocks inline style attributes.
+      outlinePanel.innerHTML = '';
+      const empty = document.createElement('div');
+      empty.className = 'outline-empty';
+      empty.textContent = 'No outline';
+      outlinePanel.appendChild(empty);
     }
 
     clearSearch(false);
@@ -579,11 +582,13 @@ function loadDocument(data: Uint8Array, password?: string, settings?: { defaultZ
       renderPage();
     }
     startThumbnails(data, password);
+    return 'opened';
 
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     vscode.postMessage({ type: 'error', message: `Failed to open PDF: ${msg}` });
     showStatus(`Error: ${msg}`);
+    return 'failed';
   }
 }
 
@@ -1418,9 +1423,14 @@ function startThumbnails(data: Uint8Array, password?: string): void {
     thumbsPanel.appendChild(item);
   }
 
+  // The closures below outlive this call; let them reach the bytes only until
+  // they are posted, so a large PDF is not retained for the viewer's lifetime.
+  let init: { data: Uint8Array; password?: string } | null = { data, password };
   fetch(window.WORKER_URI)
     .then((r) => r.blob())
     .then((blob) => {
+      const pending = init!;
+      init = null;
       if (generation !== thumbnailGeneration) return;
       const blobUrl = URL.createObjectURL(blob);
       worker = new Worker(blobUrl, { type: 'module' });
@@ -1429,8 +1439,8 @@ function startThumbnails(data: Uint8Array, password?: string): void {
         type: 'init',
         mupdfUri: window.MUPDF_JS_URI,
         wasmUri: window.WASM_URI,
-        data,
-        password,
+        data: pending.data,
+        password: pending.password,
       });
 
       worker.addEventListener('message', (e) => {
@@ -1997,25 +2007,156 @@ function updateScrollModeZoom(): void {
   }, 150);
 }
 
+/** Bytes of a document waiting for its password; released once it opens. */
+let pendingPassword: { loadId: unknown; data: Uint8Array } | null = null;
+/** Highest host `loadId` seen; `load` messages for older file versions are ignored. */
+let latestLoadId = -1;
+/** Host `loadId` of the bytes being opened, echoed in `requestPassword`. */
+let activeLoadId: unknown;
+/** Incremented per `load` message so a slower, outdated fetch is discarded. */
+let loadGeneration = 0;
+let loadAbort: AbortController | null = null;
+
+/**
+ * Normalize PDF bytes posted by the host, which may arrive as a typed array
+ * or, depending on the transport, as a plain array or object of numbers.
+ *
+ * @param raw - The `data` field of a `load` message.
+ * @returns The bytes as a `Uint8Array`.
+ */
+function toBytes(raw: any): Uint8Array {
+  if (raw instanceof Uint8Array) return raw;
+  if (Array.isArray(raw)) return new Uint8Array(raw);
+  if (raw && raw.type === 'Buffer' && Array.isArray(raw.data)) return new Uint8Array(raw.data as number[]);
+  return new Uint8Array(Object.values(raw as Record<string, number>));
+}
+
+/**
+ * Format a byte count in megabytes for progress messages.
+ *
+ * @param bytes - Number of bytes.
+ * @returns For example `"23.4 MB"`.
+ */
+function formatMegabytes(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * Stream the PDF from its webview URL, reporting progress in the status bar.
+ *
+ * @param url - Webview resource URL of the PDF.
+ * @param signal - Aborts the download when a newer load supersedes it.
+ * @returns The complete file contents.
+ */
+async function fetchPdf(url: string, signal: AbortSignal): Promise<Uint8Array> {
+  // VS Code's webview service worker caches plain GETs, validated only by size
+  // and mtime, but streams range requests straight from disk without caching.
+  const response = await fetch(url, { cache: 'no-store', headers: { Range: 'bytes=0-' }, signal });
+  if (response.status !== 200 && response.status !== 206) throw new Error(`HTTP ${response.status}`);
+  const contentRange = response.headers.get('Content-Range');
+  if (response.status === 206 && !contentRange?.startsWith('bytes 0-')) throw new Error(`Unexpected range ${contentRange}`);
+  const total = Number(contentRange?.match(/\/(\d+)$/)?.[1] ?? response.headers.get('Content-Length')) || 0;
+  if (!response.body) return new Uint8Array(await response.arrayBuffer());
+
+  const reader = response.body.getReader();
+  // Write into one buffer when the size is known, avoiding a second full copy.
+  const buffer = total ? new Uint8Array(total) : null;
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  let lastReport = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (buffer) {
+        if (received + value.byteLength > total) throw new Error('Response is longer than its declared size');
+        buffer.set(value, received);
+      } else {
+        chunks.push(value);
+      }
+      received += value.byteLength;
+      const now = Date.now();
+      if (now - lastReport >= 100) {
+        lastReport = now;
+        showStatus(total
+          ? `Loading PDF… ${formatMegabytes(received)} / ${formatMegabytes(total)}`
+          : `Loading PDF… ${formatMegabytes(received)}`);
+      }
+    }
+  } catch (err) {
+    // Stop the transfer instead of leaving the rest of the file streaming in.
+    reader.cancel().catch(() => {});
+    throw err;
+  }
+  if (buffer) {
+    if (received !== total) throw new Error(`Received ${received} of ${total} bytes`);
+    return buffer;
+  }
+  const data = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    data.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return data;
+}
+
+/**
+ * Handle a `load` message: obtain the bytes from `data` or by fetching `url`,
+ * then open the document.  A failed fetch asks the host to send the bytes.
+ *
+ * @param msg - The `load` message from the host.
+ */
+async function handleLoad(msg: any): Promise<void> {
+  if (typeof msg.loadId === 'number') {
+    if (msg.loadId < latestLoadId) return;
+    latestLoadId = msg.loadId;
+  }
+  if (msg.defaultZoom !== undefined) defaultSettings.defaultZoom = msg.defaultZoom;
+  if (msg.renderResolution !== undefined) defaultSettings.renderResolution = msg.renderResolution;
+  const generation = ++loadGeneration;
+  loadAbort?.abort();
+  loadAbort = null;
+  // A password entered for the previous file version must not open this one.
+  pendingPassword = null;
+
+  let data: Uint8Array;
+  if (typeof msg.url === 'string') {
+    const abort = new AbortController();
+    loadAbort = abort;
+    try {
+      data = await fetchPdf(msg.url, abort.signal);
+    } catch (err) {
+      if (generation !== loadGeneration) return;
+      console.warn('[pdf-viewer] Fetching the PDF failed; asking the host for its bytes:', err);
+      vscode.postMessage({ type: 'fetchFailed', loadId: msg.loadId });
+      return;
+    } finally {
+      if (loadAbort === abort) loadAbort = null;
+    }
+    if (generation !== loadGeneration) return;
+    statusEl.classList.remove('visible');
+  } else {
+    data = toBytes(msg.data);
+  }
+  activeLoadId = msg.loadId;
+  if (loadDocument(data, msg.password as string | undefined) === 'password') {
+    pendingPassword = { loadId: msg.loadId, data };
+  }
+}
+
 window.addEventListener('message', (event) => {
   const msg = event.data;
   if (msg.type === 'load') {
-    const raw = msg.data;
-    let data: Uint8Array;
-    if (raw instanceof Uint8Array) {
-      data = raw;
-    } else if (Array.isArray(raw)) {
-      data = new Uint8Array(raw);
-    } else if (raw && raw.type === 'Buffer' && Array.isArray(raw.data)) {
-      data = new Uint8Array(raw.data as number[]);
-    } else {
-      data = new Uint8Array(Object.values(raw as Record<string, number>));
+    return handleLoad(msg);
+  }
+  if (msg.type === 'password' && pendingPassword && pendingPassword.loadId === msg.loadId) {
+    const { data } = pendingPassword;
+    pendingPassword = null;
+    // An empty password asks again, so keep the bytes for the next answer.
+    if (loadDocument(data, msg.password as string) === 'password') {
+      pendingPassword = { loadId: msg.loadId, data };
     }
-    loadDocument(
-      data,
-      msg.password as string | undefined,
-      { defaultZoom: msg.defaultZoom, renderResolution: msg.renderResolution }
-    );
   }
 });
 
