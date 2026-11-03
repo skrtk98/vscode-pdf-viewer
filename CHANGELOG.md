@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.0.1]
+
+Large PDFs open much faster over Remote-SSH, and a progress bar shows how much of the file has loaded.
+
+### Fixed
+- Opening a large PDF on a remote machine no longer takes minutes: a 48 MB file that took over a minute now loads at the speed of the connection. The extension host also stays responsive while the file loads.
+- Reloading a PDF that changed on disk always shows the new contents, even when an older load finishes late.
+- Entering a password for an encrypted PDF no longer transfers the file again, and a password entered just before the file changes is not applied to the new version.
+- The "No outline" message is styled correctly instead of being blocked by the viewer's security policy.
+
+### Added
+- While a PDF loads, the status message shows the loaded size and fills as a progress bar.
+
+### Internal
+- Applied available security fixes to development dependencies, including Vitest 5, esbuild 0.28 and ovsx 1.3.0.
+
+---
+
 ## [1.0.0]
 
 The first stable release of MuPDF Viewer. It updates the bundled MuPDF engine with security fixes for crafted PDFs; there are no other user-visible changes from 0.0.8.
