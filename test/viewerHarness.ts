@@ -21,12 +21,22 @@ export function createViewer() {
   const frames = new Map<number, () => void>();
   let nextId = 0;
   class Element {
-    style: Record<string, string> = {};
+    style: Record<string, any> = { setProperty(name: string, value: string) { this[name] = value; } };
     dataset: Record<string, string> = {};
     children: Element[] = [];
     parent: Element | null = null;
     className = '';
-    classList = { add() {}, remove() {}, toggle() {} };
+    classes = new Set<string>();
+    classList = {
+      add: (name: string) => { this.classes.add(name); },
+      remove: (name: string) => { this.classes.delete(name); },
+      toggle: (name: string, force?: boolean) => {
+        const on = force ?? !this.classes.has(name);
+        if (on) this.classes.add(name); else this.classes.delete(name);
+        return on;
+      },
+      contains: (name: string) => this.classes.has(name),
+    };
     listeners: Record<string, Function[]> = {};
     width = 612; height = 792;
     clientWidth = 800; clientHeight = 600;

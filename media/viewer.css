@@ -320,6 +320,31 @@ body {
   opacity: 1;
 }
 
+#status.progress {
+  box-sizing: border-box;
+  min-width: min(240px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  overflow: hidden;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  /* A light fill keeps the notification text at 4.5:1 contrast or better in
+     the default light, dark and high-contrast themes; the edge bar below keeps
+     progress visible where the fill is faint. */
+  background: linear-gradient(to right,
+    color-mix(in srgb, var(--vscode-progressBar-background, #0e70c0) 15%, var(--vscode-notifications-background, #252526)) var(--progress, 0%),
+    var(--vscode-notifications-background, #252526) var(--progress, 0%));
+}
+
+#status.progress::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: var(--progress, 0%);
+  height: 2px;
+  background: var(--vscode-progressBar-background, #0e70c0);
+}
+
 #ctx-menu {
   position: fixed;
   z-index: 200;

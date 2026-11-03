@@ -108,6 +108,47 @@ describe('document loading', () => {
     expect(viewer.status.some(t => /^Loading PDF… [\d.]+ MB \/ [\d.]+ MB$/.test(t))).toBe(true);
   });
 
+  it('fills the status as a progress bar while loading and hides it afterwards', async () => {
+    viewer = createViewer();
+    const slow = gate();
+    const bytes = fixture('simple');
+    viewer.served.set('pdf:a', { bytes, gate: slow.promise });
+    const load = viewer.loadUrl('pdf:a', { loadId: 0 });
+    for (let i = 0; i < 20; i++) await new Promise(r => setTimeout(r, 0));
+    const status = viewer.element('status');
+    expect([...status.classes].sort()).toEqual(['progress', 'visible']);
+    const half = bytes.byteLength >> 1;
+    expect(status.style['--progress']).toBe(`${(half / bytes.byteLength * 100).toFixed(1)}%`);
+    slow.open();
+    await load;
+    expect(status.classes.has('visible')).toBe(false);
+    expect(viewer.evaluate('totalPages')).toBe(1);
+  });
+
+  it('does not show stale progress from a read that finishes after a newer load', async () => {
+    viewer = createViewer();
+    const slow = gate();
+    const bytes = fixture('multi-page');
+    // Unlike the default harness, deliver the second chunk even after an abort,
+    // as when a read has already resolved before the newer load arrives.
+    viewer.evaluate('globalThis').fetch = async () => new Response(new ReadableStream({
+      async start(controller) {
+        controller.enqueue(bytes.slice(0, 100));
+        await slow.promise;
+        controller.enqueue(bytes.slice(100));
+        controller.close();
+      },
+    }), { status: 206, headers: { 'Content-Range': `bytes 0-${bytes.byteLength - 1}/${bytes.byteLength}` } });
+    const old = viewer.loadUrl('pdf:old', { loadId: 0 });
+    for (let i = 0; i < 20; i++) await new Promise(r => setTimeout(r, 0));
+    await viewer.loadData(fixture('simple'), { loadId: 1 });
+    await new Promise(r => setTimeout(r, 120));
+    slow.open();
+    await old;
+    expect(viewer.element('status').classes.has('visible')).toBe(false);
+    expect(viewer.evaluate('totalPages')).toBe(1);
+  });
+
   it('asks the host for the bytes when the fetch fails, keeping the settings', async () => {
     viewer = createViewer();
     viewer.served.set('pdf:a', new Error('blocked'));

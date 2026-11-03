@@ -255,9 +255,31 @@ let statusTimer: ReturnType<typeof setTimeout> | null = null;
  */
 function showStatus(msg: string): void {
   statusEl.textContent = msg;
+  statusEl.classList.remove('progress');
   statusEl.classList.add('visible');
   if (statusTimer) clearTimeout(statusTimer);
   statusTimer = setTimeout(() => statusEl.classList.remove('visible'), 2500);
+}
+
+/**
+ * Show a message that stays until {@link hideProgress}, with its background
+ * filled as a progress bar when the fraction is known.
+ *
+ * @param msg - The text to display.
+ * @param fraction - Completed fraction from 0 to 1, or `null` when unknown.
+ */
+function showProgress(msg: string, fraction: number | null): void {
+  if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
+  statusEl.textContent = msg;
+  statusEl.classList.toggle('progress', fraction !== null);
+  // CSSOM changes are allowed by the CSP, unlike inline style attributes.
+  if (fraction !== null) statusEl.style.setProperty('--progress', `${(Math.min(1, fraction) * 100).toFixed(1)}%`);
+  statusEl.classList.add('visible');
+}
+
+/** Hide a message shown by {@link showProgress}. */
+function hideProgress(): void {
+  statusEl.classList.remove('visible');
 }
 
 /**
@@ -2067,6 +2089,8 @@ async function fetchPdf(url: string, signal: AbortSignal): Promise<Uint8Array> {
   try {
     for (;;) {
       const { done, value } = await reader.read();
+      // A newer load may have started while this read was pending; it owns the status now.
+      signal.throwIfAborted();
       if (done) break;
       if (buffer) {
         if (received + value.byteLength > total) throw new Error('Response is longer than its declared size');
@@ -2078,9 +2102,9 @@ async function fetchPdf(url: string, signal: AbortSignal): Promise<Uint8Array> {
       const now = Date.now();
       if (now - lastReport >= 100) {
         lastReport = now;
-        showStatus(total
+        showProgress(total
           ? `Loading PDF… ${formatMegabytes(received)} / ${formatMegabytes(total)}`
-          : `Loading PDF… ${formatMegabytes(received)}`);
+          : `Loading PDF… ${formatMegabytes(received)}`, total ? received / total : null);
       }
     }
   } catch (err) {
@@ -2128,6 +2152,7 @@ async function handleLoad(msg: any): Promise<void> {
       data = await fetchPdf(msg.url, abort.signal);
     } catch (err) {
       if (generation !== loadGeneration) return;
+      hideProgress();
       console.warn('[pdf-viewer] Fetching the PDF failed; asking the host for its bytes:', err);
       vscode.postMessage({ type: 'fetchFailed', loadId: msg.loadId });
       return;
@@ -2135,8 +2160,9 @@ async function handleLoad(msg: any): Promise<void> {
       if (loadAbort === abort) loadAbort = null;
     }
     if (generation !== loadGeneration) return;
-    statusEl.classList.remove('visible');
+    hideProgress();
   } else {
+    hideProgress();
     data = toBytes(msg.data);
   }
   activeLoadId = msg.loadId;
