@@ -2,7 +2,7 @@
 
 English | [日本語](README.ja.md)
 
-[![Visual Studio Marketplace](https://img.shields.io/visual-studio-marketplace/v/skrtk98.mupdf-viewer)](https://marketplace.visualstudio.com/items?itemName=skrtk98.mupdf-viewer)
+[![Visual Studio Marketplace](https://img.shields.io/badge/VS%20Code%20Marketplace-MuPDF%20Viewer-007ACC)](https://marketplace.visualstudio.com/items?itemName=skrtk98.mupdf-viewer)
 [![Open VSX](https://img.shields.io/open-vsx/v/skrtk98/mupdf-viewer)](https://open-vsx.org/extension/skrtk98/mupdf-viewer)
 
 Read PDFs inside VS Code with mouse-centered zoom and automatic reload when the file changes.

@@ -1,7 +1,7 @@
 {
   "name": "mupdf-viewer",
   "displayName": "MuPDF Viewer",
-  "description": "MuPDF/WASM PDF viewer for VS Code with mouse-centered zoom, search, navigation, and auto-reload.",
+  "description": "PDF viewer that auto-reloads when your LaTeX or Typst output changes, with mouse-centered zoom, search, and outline navigation. Powered by MuPDF.",
   "version": "1.0.1",
   "icon": "media/icon.png",
   "engines": {
