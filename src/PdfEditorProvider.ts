@@ -30,6 +30,17 @@ class PdfDocument implements vscode.CustomDocument {
  * tells it where to fetch the PDF on startup, and reloads the viewer whenever
  * the underlying file changes on disk.
  */
+const EXTERNAL_LINK_SCHEMES = new Set(['http', 'https', 'mailto']);
+
+/**
+ * Returns `value` limited to `[min, max]`, or `fallback` when it is not a finite number.
+ * Settings are user-editable JSON, so the viewer must not trust their type or range.
+ */
+export function clampSetting(value: unknown, min: number, max: number, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, value));
+}
+
 export class PdfEditorProvider implements vscode.CustomReadonlyEditorProvider<PdfDocument> {
   private readonly context: vscode.ExtensionContext;
 
@@ -143,8 +154,8 @@ export class PdfEditorProvider implements vscode.CustomReadonlyEditorProvider<Pd
       switch (msg.type) {
         case 'ready': {
           const config = vscode.workspace.getConfiguration('pdfViewer');
-          const defaultZoom = config.get<number>('defaultZoom', 1.0);
-          const renderResolution = config.get<number>('renderResolution', 96);
+          const defaultZoom = clampSetting(config.get('defaultZoom'), 0.1, 16, 1.0);
+          const renderResolution = clampSetting(config.get('renderResolution'), 48, 384, 96);
           try {
             await webview.postMessage({ ...(await loadMessage()), defaultZoom, renderResolution });
           } catch (e) {
@@ -157,9 +168,19 @@ export class PdfEditorProvider implements vscode.CustomReadonlyEditorProvider<Pd
           if (msg.loadId === loadId) await sendBytes(loadId);
           break;
 
-        case 'openExternal':
-          await vscode.env.openExternal(vscode.Uri.parse(msg.url));
+        case 'openExternal': {
+          // Link targets come from the PDF, so only hand web and mail links to the OS.
+          // Other schemes (file:, ms-settings:, custom protocol handlers) could launch local programs.
+          try {
+            const target = typeof msg.url === 'string' ? vscode.Uri.parse(msg.url.trim(), true) : undefined;
+            if (target && EXTERNAL_LINK_SCHEMES.has(target.scheme.toLowerCase())) {
+              await vscode.env.openExternal(target);
+            }
+          } catch {
+            // Malformed link URIs are ignored.
+          }
           break;
+        }
 
         case 'requestPassword': {
           const password = await vscode.window.showInputBox({
@@ -180,15 +201,16 @@ export class PdfEditorProvider implements vscode.CustomReadonlyEditorProvider<Pd
     });
     disposables.push(messageHandler);
 
+    // Watch the PDF's directory and match the file by name: glob characters such as `[` in the
+    // file name would otherwise be read as a pattern. joinPath keeps the scheme and authority,
+    // so files on remote and virtual file systems are watched too.
+    const fileName = path.posix.basename(document.uri.path);
     const watcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(
-        vscode.Uri.file(path.dirname(document.uri.fsPath)),
-        path.basename(document.uri.fsPath)
-      )
+      new vscode.RelativePattern(vscode.Uri.joinPath(document.uri, '..'), '*')
     );
 
-    const onDidChange = watcher.onDidChange(async () => {
-      if (disposed) return;
+    const onDidChange = watcher.onDidChange(async (changed) => {
+      if (disposed || path.posix.basename(changed.path) !== fileName) return;
       loadId++;
       try {
         await webview.postMessage(await loadMessage());

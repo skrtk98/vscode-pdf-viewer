@@ -5,8 +5,8 @@
 [![Visual Studio Marketplace](https://img.shields.io/badge/VS%20Code%20Marketplace-MuPDF%20Viewer-007ACC)](https://marketplace.visualstudio.com/items?itemName=skrtk98.mupdf-viewer)
 [![Open VSX](https://img.shields.io/open-vsx/v/skrtk98/mupdf-viewer)](https://open-vsx.org/extension/skrtk98/mupdf-viewer)
 
-マウス位置を基点としたズームと、ファイル更新時の自動再読み込みで、VS Code 内で PDF を読めます。
-WebAssembly にコンパイルした [MuPDF](https://github.com/ArtifexSoftware/mupdf) を描画エンジンに採用し、VS Code 向けの閲覧 UI を備えています。
+LaTeX や Typst の出力が更新されると自動で再読み込みする、VS Code 用の PDF ビューアです。マウス位置を基点としたズーム、検索、アウトラインからのページ移動に対応しています。
+描画には、WebAssembly にコンパイルした [MuPDF](https://github.com/ArtifexSoftware/mupdf) を使っています。
 
 ![MuPDF Viewer in VS Code](media/demo-overview.png)
 
@@ -16,12 +16,15 @@ WebAssembly にコンパイルした [MuPDF](https://github.com/ArtifexSoftware/
 LaTeX や Typst などで文書を再ビルドすると、ディスク上の PDF の更新に応じて表示が再読み込みされます。
 ビルドには普段のツールを使い、MuPDF Viewer で閲覧とページ移動を行えます。
 
+リモートマシン上の大きな PDF もすぐに開けます。Remote-SSH 越しでも回線の速度でファイルを読み込み、読み込みの進み具合を表示します。
+
 ## 主な機能
 
-- **MuPDF/WASM による描画**：VS Code のカスタムエディタで PDF を表示。
+- **自動再読み込み**：開いている PDF がディスク上で変更されると表示を更新。
 - **マウス位置を基点としたズーム**：`Ctrl+ホイール` または `マウス右ボタン+ホイール` で拡大縮小。
 - **2 つの表示モード**：連続スクロールと単ページ表示を切り替え。
-- **自動再読み込み**：開いている PDF がディスク上で変更されると表示を更新。
+- **リモートでも高速に表示**：Remote-SSH 越しの大きな PDF も、進み具合を表示しながら読み込み。
+- **制限モードでも利用可能**：信頼済みにしていないフォルダの PDF も表示。
 - **ナビゲーション**：アウトライン、サムネイル、ページ番号、PDF 内の内部リンクと外部リンクに対応。
 - **検索とテキスト選択**：文書全体の検索、テキストの選択とコピー。
 - **画像コピーと回転**：画像を PNG としてコピーし、ページ単位で回転。
@@ -98,13 +101,8 @@ VS Code で任意の `.pdf` ファイルを開くと、カスタムエディタ�
 
 | キー | 型 | デフォルト | 説明 |
 |------|----|-----------|------|
-| `pdfViewer.defaultZoom` | number | `1.0` | 初期ズーム倍率（1.0 = 100%）。 |
-| `pdfViewer.renderResolution` | number | `96` | レンダリング解像度（DPI）。高いほど高品質だがメモリ使用量が増加する。 |
-
-## MuPDF の採用について
-
-MuPDF Viewer は、WebAssembly にコンパイルした MuPDF を描画エンジンとして使っています。
-ツールバー、ナビゲーション、ズーム操作は拡張機能側で実装し、VS Code 内での日常的な PDF 閲覧に用途を絞っています。
+| `pdfViewer.defaultZoom` | number | `1.0` | 初期ズーム倍率（1.0 = 100%）。0.1〜16 の範囲。 |
+| `pdfViewer.renderResolution` | number | `96` | レンダリング解像度（DPI）。48〜384 の範囲。高いほど高品質だがメモリ使用量が増加する。制限モードではユーザー設定の値だけを使う。 |
 
 ## インストール
 
@@ -118,6 +116,14 @@ Open VSX を利用する環境では、[Open VSX Registry](https://open-vsx.org/
 
 PDF を開くと閲覧を開始できます。
 別の拡張機能で開く場合は、エディタのタブを右クリックし、**エディターを開くアプリケーションの選択…**（Reopen Editor With…）から **MuPDF Viewer** を選択します。
+
+ほかの PDF 拡張機能を入れたまま、常に MuPDF Viewer で開くには、`settings.json` に次の設定を追加します。
+
+```json
+"workbench.editorAssociations": {
+  "*.pdf": "pdfViewer.pdfEditor"
+}
+```
 
 ## 開発とリリース
 

@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.0.2]
+
+PDFs now open in folders you have not marked as trusted, and the extension is smaller to download.
+
+### Fixed
+- PDFs open in Restricted Mode. Previously the extension was disabled in untrusted folders, so PDFs there could not be viewed. In Restricted Mode, the `pdfViewer.renderResolution` setting is taken only from your user settings.
+- Links in a PDF open only when they point to web pages (`http`, `https`) or email addresses (`mailto`). Links to local files or other programs are ignored, so a crafted PDF cannot launch them.
+- Automatic reload watches the PDF on the same file system it was opened from, including virtual file systems provided by other extensions. Previously the watcher was always created on the local disk.
+- Automatic reload works for file names containing characters such as `[` and `]`, and no longer reloads when a similarly named file changes.
+- Malformed link addresses in a PDF are ignored instead of causing an error.
+- Out-of-range or invalid values for `pdfViewer.defaultZoom` and `pdfViewer.renderResolution` are limited to 0.1–16 and 48–384 instead of breaking the view.
+
+### Changed
+- The extension package no longer includes the README demo images, making the download about 1.3 MB smaller.
+- Rewrote the Marketplace description and README introduction around reading LaTeX and Typst output, and added instructions for making MuPDF Viewer the default PDF editor when other PDF extensions are installed.
+- Settings now describe their allowed ranges.
+
+---
+
 ## [1.0.1]
 
 Large PDFs open much faster over Remote-SSH, and a progress bar shows how much of the file has loaded.

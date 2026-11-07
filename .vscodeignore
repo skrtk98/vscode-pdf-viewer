@@ -16,3 +16,5 @@ TESTS.md
 docs/**
 *-plan.md
 *.vsix
+media/demo-*
+.gitignore

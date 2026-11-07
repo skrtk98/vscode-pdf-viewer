@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as path from 'path';
+import * as fs from 'fs';
 
 // vi.hoisted ensures these are available before vi.mock factories run
 const {
@@ -84,12 +85,19 @@ vi.mock('vscode', () => {
       joinPath: (...args: unknown[]) => {
         const parts = args.slice(1) as string[];
         const base = (args[0] as { fsPath: string }).fsPath ?? '';
+        const src = args[0] as { scheme?: string; authority?: string; path?: string };
         return {
+          scheme: src.scheme,
+          authority: src.authority,
+          path: path.posix.join(src.path ?? base, ...parts),
           fsPath: path.join(base, ...parts),
           toString: () => path.join(base, ...parts),
         };
       },
-      parse: (url: string) => ({ toString: () => url }),
+      parse: (url: string) => {
+        if (/^\s|^https?:\/\/\//i.test(url)) throw new Error('malformed');
+        return { scheme: url.slice(0, Math.max(0, url.indexOf(':'))), toString: () => url };
+      },
       file: (p: string) => ({ fsPath: p, toString: () => p }),
     },
     RelativePattern: vi.fn(function () { return {}; }),
@@ -119,7 +127,7 @@ vi.mock('fs', async (importOriginal) => {
   };
 });
 
-import { PdfEditorProvider } from '../src/PdfEditorProvider';
+import { PdfEditorProvider, clampSetting } from '../src/PdfEditorProvider';
 import * as vscode from 'vscode';
 
 const makeContext = () => ({
@@ -127,7 +135,7 @@ const makeContext = () => ({
   subscriptions: [],
 });
 
-async function setup(data: Uint8Array, scheme = 'file') {
+async function setup(data: Uint8Array, scheme = 'file', authority = '') {
   vi.mocked(vscode.workspace.fs.readFile).mockResolvedValue(
     data as unknown as Uint8Array & { buffer: ArrayBuffer }
   );
@@ -144,6 +152,7 @@ async function setup(data: Uint8Array, scheme = 'file') {
   const provider = new PdfEditorProvider(context as unknown as vscode.ExtensionContext);
   const uri = {
     scheme,
+    authority,
     fsPath: '/tmp/test.pdf',
     toString: () => '/tmp/test.pdf',
     path: '/tmp/test.pdf',
@@ -212,7 +221,7 @@ describe('TC-INT-02: fetch failure falls back to bytes', () => {
   it('ignores fetchFailed for a file version that was already replaced', async () => {
     await setup(new Uint8Array([1]));
     await triggerReady();
-    await getOnDidChangeCb()?.({});
+    await getOnDidChangeCb()?.({ path: '/tmp/test.pdf' });
     mockPostMessage.mockClear();
 
     await getOnDidReceiveCb()?.({ type: 'fetchFailed', loadId: 0 });
@@ -228,7 +237,7 @@ describe('TC-INT-02: fetch failure falls back to bytes', () => {
       new Promise(resolve => { finishRead = resolve as (data: Uint8Array) => void; }) as never
     );
     const fallback = getOnDidReceiveCb()?.({ type: 'fetchFailed', loadId: 0 });
-    await getOnDidChangeCb()?.({});
+    await getOnDidChangeCb()?.({ path: '/tmp/test.pdf' });
     mockPostMessage.mockClear();
 
     finishRead(new Uint8Array([9]));
@@ -244,7 +253,7 @@ describe('TC-INT-03: FileSystemWatcher triggers re-load', () => {
     await triggerReady();
     mockPostMessage.mockClear();
 
-    await getOnDidChangeCb()?.({});
+    await getOnDidChangeCb()?.({ path: '/tmp/test.pdf' });
     await Promise.resolve();
     await Promise.resolve();
 
@@ -260,7 +269,7 @@ describe('TC-INT-03: FileSystemWatcher triggers re-load', () => {
     vi.mocked(vscode.workspace.fs.readFile).mockResolvedValue(
       dataB as unknown as Uint8Array & { buffer: ArrayBuffer }
     );
-    await getOnDidChangeCb()?.({});
+    await getOnDidChangeCb()?.({ path: '/tmp/test.pdf' });
     await Promise.resolve();
     await Promise.resolve();
 
@@ -277,7 +286,7 @@ describe('TC-INT-04: FileSystemWatcher disposed on panel close', () => {
 
     getOnDidDisposeCb()?.();
 
-    await getOnDidChangeCb()?.({});
+    await getOnDidChangeCb()?.({ path: '/tmp/test.pdf' });
     await Promise.resolve();
     await Promise.resolve();
 
@@ -295,6 +304,30 @@ describe('TC-INT-05: openExternal message relay', () => {
 
     expect(mockOpenExternal).toHaveBeenCalled();
   });
+
+  it.each(['file:///C:/Windows/System32/calc.exe', 'ms-settings:display', 'vscode://settings', 'javascript:alert(1)'])(
+    'does not open %s',
+    async (url) => {
+      await setup(new Uint8Array([1]));
+      await getOnDidReceiveCb()?.({ type: 'openExternal', url });
+      await Promise.resolve();
+      expect(mockOpenExternal).not.toHaveBeenCalled();
+    },
+  );
+
+  it('ignores malformed link URIs without throwing', async () => {
+    await setup(new Uint8Array([1]));
+    await expect(getOnDidReceiveCb()?.({ type: 'openExternal', url: 'https:////example.com' })).resolves.toBeUndefined();
+    expect(mockOpenExternal).not.toHaveBeenCalled();
+  });
+
+  it('opens mailto and upper-case HTTPS links', async () => {
+    await setup(new Uint8Array([1]));
+    await getOnDidReceiveCb()?.({ type: 'openExternal', url: 'mailto:a@example.com' });
+    await getOnDidReceiveCb()?.({ type: 'openExternal', url: 'HTTPS://example.com' });
+    await Promise.resolve();
+    expect(mockOpenExternal).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('TC-INT-06: requestPassword → password', () => {
@@ -311,5 +344,69 @@ describe('TC-INT-06: requestPassword → password', () => {
     await Promise.resolve();
 
     expect(mockPostMessage).toHaveBeenCalledWith({ type: 'password', loadId: 0, password: 'secret' });
+  });
+});
+
+describe('settings sent to the webview', () => {
+  it('limits out-of-range and invalid settings', async () => {
+    const values: Record<string, unknown> = { defaultZoom: 1000, renderResolution: 'high' };
+    vi.mocked(vscode.workspace.getConfiguration).mockReturnValueOnce({
+      get: (key: string) => values[key],
+    } as unknown as vscode.WorkspaceConfiguration);
+    await setup(new Uint8Array([1]));
+    await triggerReady();
+
+    const call = mockPostMessage.mock.calls[0][0];
+    expect(call.defaultZoom).toBe(16);
+    expect(call.renderResolution).toBe(96);
+  });
+
+  it('clampSetting keeps finite numbers within range and replaces anything else', () => {
+    expect(clampSetting(1.5, 0.1, 16, 1)).toBe(1.5);
+    expect(clampSetting(0, 0.1, 16, 1)).toBe(0.1);
+    expect(clampSetting(-5, 48, 384, 96)).toBe(48);
+    expect(clampSetting(10_000, 48, 384, 96)).toBe(384);
+    expect(clampSetting(Number.NaN, 48, 384, 96)).toBe(96);
+    expect(clampSetting(Infinity, 48, 384, 96)).toBe(96);
+    expect(clampSetting(undefined, 48, 384, 96)).toBe(96);
+    expect(clampSetting('200', 48, 384, 96)).toBe(96);
+  });
+});
+
+describe('extension manifest', () => {
+  it('supports Restricted Mode while ignoring workspace render resolution', () => {
+    const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+    expect(manifest.capabilities.untrustedWorkspaces).toMatchObject({
+      supported: 'limited',
+      restrictedConfigurations: ['pdfViewer.renderResolution'],
+    });
+  });
+});
+
+describe('file watcher', () => {
+  it('watches the document directory with its own scheme', async () => {
+    vi.mocked(vscode.RelativePattern).mockClear();
+    await setup(new Uint8Array([1]), 'memfs', 'tenant-a');
+    const [base, pattern] = vi.mocked(vscode.RelativePattern).mock.calls[0] as unknown as [
+      { scheme: string; authority: string; path: string },
+      string,
+    ];
+    expect(base).toMatchObject({ scheme: 'memfs', authority: 'tenant-a', path: '/tmp' });
+    expect(pattern).toBe('*');
+  });
+
+  it('reloads only when the open PDF changes, not its neighbours', async () => {
+    await setup(new Uint8Array([1]));
+    await triggerReady();
+    mockPostMessage.mockClear();
+
+    await getOnDidChangeCb()?.({ path: '/tmp/test1.pdf' });
+    await Promise.resolve();
+    expect(mockPostMessage).not.toHaveBeenCalled();
+
+    await getOnDidChangeCb()?.({ path: '/tmp/test.pdf' });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(mockPostMessage).toHaveBeenCalledTimes(1);
   });
 });

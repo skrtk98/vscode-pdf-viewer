@@ -2,7 +2,7 @@
   "name": "mupdf-viewer",
   "displayName": "MuPDF Viewer",
   "description": "PDF viewer that auto-reloads when your LaTeX or Typst output changes, with mouse-centered zoom, search, and outline navigation. Powered by MuPDF.",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.85.0"
@@ -14,20 +14,31 @@
   "keywords": [
     "pdf",
     "pdf viewer",
+    "pdf reader",
     "pdf preview",
     "viewer",
     "preview",
     "mupdf",
-    "wasm",
-    "webassembly",
-    "document",
     "latex",
+    "tex",
     "typst",
+    "paper",
+    "document",
     "auto reload",
-    "continuous scroll",
+    "remote ssh",
     "zoom"
   ],
   "activationEvents": [],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "PDFs can be viewed in Restricted Mode. The pdfViewer.renderResolution setting is read only from user settings until the workspace is trusted.",
+      "restrictedConfigurations": [
+        "pdfViewer.renderResolution"
+      ]
+    },
+    "virtualWorkspaces": true
+  },
   "main": "./dist/extension.js",
   "contributes": {
     "customEditors": [
@@ -48,12 +59,16 @@
         "pdfViewer.defaultZoom": {
           "type": "number",
           "default": 1,
-          "description": "Default zoom level for PDF view"
+          "minimum": 0.1,
+          "maximum": 16,
+          "markdownDescription": "Zoom level used when a PDF is first opened. `1.0` is 100%; values are limited to 0.1–16."
         },
         "pdfViewer.renderResolution": {
           "type": "number",
           "default": 96,
-          "description": "Rendering resolution in DPI"
+          "minimum": 48,
+          "maximum": 384,
+          "markdownDescription": "Rendering resolution in DPI, before display scaling. Higher values are sharper but use more memory; values are limited to 48–384."
         }
       }
     }

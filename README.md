@@ -5,8 +5,8 @@ English | [日本語](README.ja.md)
 [![Visual Studio Marketplace](https://img.shields.io/badge/VS%20Code%20Marketplace-MuPDF%20Viewer-007ACC)](https://marketplace.visualstudio.com/items?itemName=skrtk98.mupdf-viewer)
 [![Open VSX](https://img.shields.io/open-vsx/v/skrtk98/mupdf-viewer)](https://open-vsx.org/extension/skrtk98/mupdf-viewer)
 
-Read PDFs inside VS Code with mouse-centered zoom and automatic reload when the file changes.
-Powered by [MuPDF](https://github.com/ArtifexSoftware/mupdf) compiled to WebAssembly, with a viewer interface built for VS Code.
+A PDF viewer for VS Code that reloads when your LaTeX or Typst output changes, with mouse-centered zoom, search, and outline navigation.
+Rendering uses [MuPDF](https://github.com/ArtifexSoftware/mupdf) compiled to WebAssembly.
 
 ![MuPDF Viewer in VS Code](media/demo-overview.png)
 
@@ -16,12 +16,15 @@ Keep a generated PDF beside its source while you work.
 For LaTeX, Typst, or other tools that generate PDFs, rebuild the document and the viewer reloads the updated file from disk.
 Use your existing build tools; MuPDF Viewer handles viewing and navigation.
 
+Large PDFs on a remote machine open quickly too: over Remote-SSH, the viewer streams the file at the speed of the connection and shows how much has loaded.
+
 ## Highlights
 
-- **MuPDF/WASM rendering** — Read PDFs directly in a VS Code custom editor.
+- **Automatic reload** — See updates when the open PDF changes on disk.
 - **Mouse-centered zoom** — Zoom around the cursor with `Ctrl+Wheel` or `Right mouse button+Wheel`.
 - **Two view modes** — Switch between continuous scrolling and single-page reading.
-- **Automatic reload** — See updates when the open PDF changes on disk.
+- **Fast remote loading** — Open large PDFs over Remote-SSH with a progress indicator.
+- **Works in Restricted Mode** — Read PDFs in folders you have not marked as trusted.
 - **Navigation** — Use outlines, thumbnails, page numbers, and internal or external PDF links.
 - **Search and text selection** — Find text throughout the document, select it, and copy it.
 - **Image copy and rotation** — Copy images as PNG and rotate individual pages.
@@ -97,13 +100,8 @@ Click the rotate button to rotate the current page 90° clockwise.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `pdfViewer.defaultZoom` | number | `1.0` | Initial zoom level (1.0 = 100%). |
-| `pdfViewer.renderResolution` | number | `96` | Render resolution in DPI. Higher values produce sharper output at the cost of more memory. |
-
-## Why MuPDF?
-
-MuPDF Viewer uses MuPDF compiled to WebAssembly as its rendering engine.
-The extension provides its own toolbar, navigation, and zoom controls around that engine, focusing on everyday PDF reading inside VS Code.
+| `pdfViewer.defaultZoom` | number | `1.0` | Initial zoom level (1.0 = 100%), from 0.1 to 16. |
+| `pdfViewer.renderResolution` | number | `96` | Render resolution in DPI, from 48 to 384. Higher values produce sharper output at the cost of more memory. In Restricted Mode, only the user setting is used. |
 
 ## Installation
 
@@ -117,6 +115,14 @@ For clients that use Open VSX, install from the [Open VSX Registry](https://open
 
 Open a PDF to start reading.
 If another extension opens it, right-click the editor tab, choose **Reopen Editor With…**, and select **MuPDF Viewer**.
+
+To always open PDFs with MuPDF Viewer when another PDF extension is installed, add this to your `settings.json`:
+
+```json
+"workbench.editorAssociations": {
+  "*.pdf": "pdfViewer.pdfEditor"
+}
+```
 
 ## Development and releases
 
