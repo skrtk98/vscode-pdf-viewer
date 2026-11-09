@@ -30,6 +30,11 @@ class PdfDocument implements vscode.CustomDocument {
  * tells it where to fetch the PDF on startup, and reloads the viewer whenever
  * the underlying file changes on disk.
  */
+/** Time to wait after the last file event before reloading. */
+export const RELOAD_DEBOUNCE_MS = 150;
+/** Longest time to hold back a reload while file events keep arriving. */
+export const RELOAD_MAX_WAIT_MS = 1000;
+
 const EXTERNAL_LINK_SCHEMES = new Set(['http', 'https', 'mailto']);
 
 /**
@@ -129,8 +134,12 @@ export class PdfEditorProvider implements vscode.CustomReadonlyEditorProvider<Pd
     const disposables: vscode.Disposable[] = [];
     let disposed = false;
     // Identifies the file version a message refers to. Bumped on each reload so
-    // that replies to an older load (fallback bytes, passwords) are discarded.
+    // that a late fallback request for an older load is discarded.
     let loadId = 0;
+    // Reload scheduling (see the file watcher below). maxWaitTimer is started by the first event of
+    // a burst and not reset by later ones, so the wait is bounded without relying on the wall clock.
+    let reloadTimer: ReturnType<typeof setTimeout> | undefined;
+    let maxWaitTimer: ReturnType<typeof setTimeout> | undefined;
 
     const loadMessage = async (): Promise<Record<string, unknown>> => {
       const id = loadId;
@@ -149,6 +158,17 @@ export class PdfEditorProvider implements vscode.CustomReadonlyEditorProvider<Pd
       }
     };
 
+    const promptPassword = async (id: number): Promise<void> => {
+      const password = await vscode.window.showInputBox({
+        prompt: 'Enter PDF password',
+        password: true,
+        ignoreFocusOut: true,
+      });
+      if (password !== undefined && !disposed) {
+        await webview.postMessage({ type: 'password', loadId: id, password });
+      }
+    };
+
     const messageHandler = webview.onDidReceiveMessage(async (msg) => {
       if (disposed) return;
       switch (msg.type) {
@@ -157,7 +177,8 @@ export class PdfEditorProvider implements vscode.CustomReadonlyEditorProvider<Pd
           const defaultZoom = clampSetting(config.get('defaultZoom'), 0.1, 16, 1.0);
           const renderResolution = clampSetting(config.get('renderResolution'), 48, 384, 96);
           try {
-            await webview.postMessage({ ...(await loadMessage()), defaultZoom, renderResolution });
+            const message = await loadMessage();
+            await webview.postMessage({ ...message, defaultZoom, renderResolution });
           } catch (e) {
             vscode.window.showErrorMessage(`PDF Viewer: Failed to read PDF: ${e instanceof Error ? e.message : String(e)}`);
           }
@@ -182,17 +203,13 @@ export class PdfEditorProvider implements vscode.CustomReadonlyEditorProvider<Pd
           break;
         }
 
-        case 'requestPassword': {
-          const password = await vscode.window.showInputBox({
-            prompt: 'Enter PDF password',
-            password: true,
-            ignoreFocusOut: true,
-          });
-          if (password !== undefined) {
-            await webview.postMessage({ type: 'password', loadId: msg.loadId, password });
-          }
+        case 'requestPassword':
+          // The host cannot tell which load the webview currently shows (loads can arrive out of
+          // order or across a webview reload), so it answers every request. The webview ignores a
+          // password whose loadId is not the document it is waiting on, and a newer prompt replaces
+          // an older one that is still open.
+          await promptPassword(msg.loadId);
           break;
-        }
 
         case 'error':
           vscode.window.showErrorMessage(`PDF Viewer: ${msg.message}`);
@@ -209,15 +226,40 @@ export class PdfEditorProvider implements vscode.CustomReadonlyEditorProvider<Pd
       new vscode.RelativePattern(vscode.Uri.joinPath(document.uri, '..'), '*')
     );
 
-    const onDidChange = watcher.onDidChange(async (changed) => {
-      if (disposed || path.posix.basename(changed.path) !== fileName) return;
-      loadId++;
+    // Tools that write a temporary file and rename it over the PDF (Tinymist, latexmk -pvc with
+    // dvipdfmx) are reported as a create, not a change. One write can also produce several events,
+    // so reload once no event has arrived for RELOAD_DEBOUNCE_MS, or at least every
+    // RELOAD_MAX_WAIT_MS while events keep arriving. A delete alone does not reload: the file is
+    // usually recreated right after, which arrives as a create.
+    const cancelReload = () => {
+      clearTimeout(reloadTimer);
+      clearTimeout(maxWaitTimer);
+      reloadTimer = undefined;
+      maxWaitTimer = undefined;
+    };
+    const reload = async () => {
+      cancelReload();
+      if (disposed) return;
       try {
-        await webview.postMessage(await loadMessage());
+        const message = await loadMessage();
+        // Post even if the file changed again while a non-file PDF was being read: the snapshot is
+        // still newer than what is shown, a further reload is already scheduled, and the viewer
+        // ignores loads older than the latest one it has received.
+        if (!disposed) await webview.postMessage(message);
       } catch (_e) {
       }
-    });
-    disposables.push(watcher, onDidChange);
+    };
+    const scheduleReload = (changed: vscode.Uri) => {
+      if (disposed || path.posix.basename(changed.path) !== fileName) return;
+      // Invalidate the current load at once so a late fallback for it is dropped.
+      loadId++;
+      clearTimeout(reloadTimer);
+      reloadTimer = setTimeout(reload, RELOAD_DEBOUNCE_MS);
+      maxWaitTimer ??= setTimeout(reload, RELOAD_MAX_WAIT_MS);
+    };
+    const onDidChange = watcher.onDidChange(scheduleReload);
+    const onDidCreate = watcher.onDidCreate(scheduleReload);
+    disposables.push(watcher, onDidChange, onDidCreate, { dispose: cancelReload });
 
     const disposeSubscription = webviewPanel.onDidDispose(() => {
       disposed = true;
