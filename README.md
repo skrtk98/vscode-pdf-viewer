@@ -124,10 +124,6 @@ To always open PDFs with MuPDF Viewer when another PDF extension is installed, a
 }
 ```
 
-## Development and releases
-
-See the [release guide](docs/releasing.md) for local checks, VSIX packaging, and publishing to Visual Studio Marketplace and Open VSX.
-
 ## License
 
 Licensed under [AGPL-3.0](LICENSE).

@@ -125,10 +125,6 @@ PDF を開くと閲覧を開始できます。
 }
 ```
 
-## 開発とリリース
-
-ローカルでの検証、VSIX の作成、Visual Studio Marketplace と Open VSX への公開については、[リリース手順](docs/releasing.md)を参照してください。
-
 ## ライセンス
 
 [AGPL-3.0](LICENSE) で提供しています。
