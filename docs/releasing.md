@@ -17,52 +17,30 @@ Install the resulting VSIX with **Extensions: Install from VSIX…** and check o
 
 ## Registry setup
 
-Visual Studio Marketplace uses Microsoft Entra ID through GitHub OIDC federation.
-Open VSX uses its own trusted publishing integration. Neither release job requires a PAT.
+Both registries publish from GitHub Actions without personal access tokens.
+Never put tokens in tracked files, command arguments, or logs.
 
-### Marketplace migration to Microsoft Entra ID
+### Visual Studio Marketplace
 
-Use GitHub OIDC federation with a dedicated Entra application/service principal.
-The [Azure Login action](https://github.com/Azure/login#login-with-openid-connect-oidc-recommended) supports this flow and login without an Azure subscription.
-Marketplace publishing uses `vsce --azure-credential`; see the [Microsoft publishing guide](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#secure-automated-publishing-to-visual-studio-marketplace).
+Publishing uses Microsoft Entra ID through GitHub OIDC federation ([Azure Login](https://github.com/Azure/login#login-with-openid-connect-oidc-recommended), `vsce --azure-credential`; see the [Microsoft publishing guide](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#secure-automated-publishing-to-visual-studio-marketplace)).
 
-The [authentication verification workflow](../.github/workflows/verify-marketplace-auth.yml) is ready for the following setup:
+- A dedicated single-tenant Entra application has no client secret and one federated credential:
+  - Issuer: `https://token.actions.githubusercontent.com`
+  - Subject: `repo:skrtk98/vscode-pdf-viewer:environment:marketplace`
+  - Audience: `api://AzureADTokenExchange`
+- The GitHub environment `marketplace` allows branch `main` and tags `v*`, and stores `AZURE_CLIENT_ID` and `AZURE_TENANT_ID` as environment secrets.
+- The application's Azure DevOps identity is a **Contributor** of Marketplace publisher `skrtk98`.
+  The [authentication verification workflow](../.github/workflows/verify-marketplace-auth.yml) reports that identity ID and, with `verify_permissions` checked, confirms publishing rights without uploading a package.
 
-1. In an Entra tenant where you may register applications, create a dedicated single-tenant application named `mupdf-viewer-publisher`. Record its Application (client) ID and Directory (tenant) ID. Do not create a client secret.
-2. Under the application's **Certificates & secrets → Federated credentials**, select **Other issuer** and add a credential named `github-marketplace-environment` with the exact values below. The GitHub preset can generate an ID-based subject that does not match this repository's current token.
-   - Issuer: `https://token.actions.githubusercontent.com`
-   - Subject: `repo:skrtk98/vscode-pdf-viewer:environment:marketplace`
-   - Audience: `api://AzureADTokenExchange`
-3. Create the GitHub repository environment `marketplace`. Set its deployment branch/tag policy to selected branches and tags: branch `main` for verification, tags `v*` for releases. Store `AZURE_CLIENT_ID` and `AZURE_TENANT_ID` as environment secrets. These are identifiers, not passwords; no PAT or client secret is needed.
-4. Run **Verify Marketplace authentication** on `main` with `verify_permissions` unchecked. Its summary reports the identity ID returned by the Azure DevOps profile API. This is the ID to use in Marketplace, rather than assuming the application ID or Entra object ID is interchangeable.
-5. In Marketplace publisher `skrtk98`, open **Members** and add that identity as a **Contributor**.
-6. Run the verification workflow again with `verify_permissions` checked. `vsce verify-pat skrtk98 --azure-credential` checks publishing rights without uploading a package, despite the historical command name.
-7. The `publish-marketplace` job in `release.yml` uses environment `marketplace`, job permission `id-token: write`, and the same Azure Login step. It verifies publishing rights and publishes with `--azure-credential --packagePath mupdf-viewer.vsix --skip-duplicate`.
-8. Configuration pushes to `main` exercise this release job using version 1.0.0 downloaded directly from Marketplace. Success followed by duplicate skipping verifies the publishing authentication path. After success, remove any unused `VSCE_PAT` secret and revoke its token if not used elsewhere.
-
-The verification workflow is manual and does not publish or modify extensions.
-The release job has no PAT fallback. Keep the federated subject aligned with the actual GitHub token if the repository OIDC subject configuration changes.
-If the account cannot register applications, obtain access to an appropriate Entra tenant before continuing.
-
-Direct Marketplace trusted publishing remains a separate option: `@vscode/vsce` 4.0.0 includes a hidden `--oidc` flag, but no registration setting was visible in this publisher's management UI on October 1, 2026.
-The migration above uses Entra federation and does not depend on that setting.
+If the repository's OIDC subject format changes, update the federated credential to match.
 
 ### Open VSX
 
-For Open VSX, use [Trusted Publishing](https://github.com/eclipse-openvsx/openvsx/wiki/Trusted-Publishing):
-
-1. Sign in to Open VSX, accept the Publisher Agreement, and ensure your account is an **owner** of the `skrtk98` namespace. Contributor access is insufficient for registering a trusted publisher.
-2. In [Settings → Trusted Publishers](https://open-vsx.org/user-settings/trusted-publishers), register extension `mupdf-viewer` with provider GitHub Actions, owner `skrtk98`, repository `vscode-pdf-viewer`, and workflow filename `release.yml`.
-3. Leave the environment field empty for the current workflow. If you restrict the registration to an environment, add that exact `environment:` to both `verify-open-vsx` and `publish-open-vsx` jobs and configure its branch/tag rules accordingly.
-4. The workflow uses locked `ovsx` 1.3.0, grants `id-token: write` only to the Open VSX jobs, and publishes with `--trusted-publishing`. It does not pass `OVSX_PAT` or fall back to PAT authentication.
-
-The extension and namespace already exist. Trusted publishing requires an active version and cannot bootstrap a new extension or create a namespace.
-A single trusted publisher can be registered per extension, so both tag and manual publication use `release.yml`.
-Registrations are not bound to a branch/tag; keep changes to the registered workflow controlled.
-After verifying trusted publishing, remove the unused `OVSX_PAT` repository secret and revoke its Open VSX token if it is not used elsewhere.
-Delete the secret under [repository Settings → Secrets and variables → Actions](https://github.com/skrtk98/vscode-pdf-viewer/settings/secrets/actions).
-Deleting a GitHub secret does not revoke the underlying token: remove that token separately in Open VSX account settings.
-Never put tokens in tracked files, command arguments, or logs.
+Publishing uses [Trusted Publishing](https://github.com/eclipse-openvsx/openvsx/wiki/Trusted-Publishing).
+Extension `mupdf-viewer` is registered with provider GitHub Actions, repository `skrtk98/vscode-pdf-viewer`, workflow `release.yml`, and no environment.
+Registering requires owner access to the `skrtk98` namespace.
+Only one trusted publisher can be registered per extension, and the registration is not bound to a branch or tag, so keep changes to `release.yml` controlled.
+If you restrict the registration to an environment, add that `environment:` to the `verify-open-vsx` and `publish-open-vsx` jobs.
 
 ## Tag release
 
@@ -81,8 +59,8 @@ If a registry fails, correct its credentials or namespace access and rerun faile
 The publish commands skip versions already present, allowing a partially completed release to be retried.
 Do not move an already published tag or reuse a version for changed contents; publish a new version.
 
-After the first Open VSX release, verify the [listing](https://open-vsx.org/extension/skrtk98/mupdf-viewer), namespace ownership status, and installation from an Open VSX client.
-Check the Marketplace listing and GitHub Release asset as well.
+After a release, check the [Marketplace listing](https://marketplace.visualstudio.com/items?itemName=skrtk98.mupdf-viewer), the [Open VSX listing](https://open-vsx.org/extension/skrtk98/mupdf-viewer), and the GitHub Release asset.
+Open VSX can take several minutes to show a new version.
 
 ## Verifying trusted publishing
 
@@ -99,7 +77,6 @@ The package job checks out that tag, validates it, and builds its VSIX.
 The Open VSX job uses the workflow revision's locked CLI so older tags still publish through trusted publishing.
 Manual runs skip Marketplace and attach the VSIX to the corresponding GitHub Release after Open VSX succeeds.
 Tags before v1.0.0 lack `scripts/release-notes.mjs`, so manual runs for them fail.
-The former `publish-open-vsx.yml` workflow has been consolidated into `release.yml` to use the same trusted publisher registration.
 
 ## Demo assets
 
@@ -116,9 +93,3 @@ For search, search for `document` with the outline visible.
 Record zoom around an equation with the right mouse button held while scrolling.
 For reload, split the Typst source and PDF, change the title from `From source\ to PDF` to `From source\ to revision`, save, and recompile the PDF.
 Keep each GIF focused on one operation and approximately 4–8 seconds long.
-
-## Measuring impact
-
-Record the date, Marketplace installs, GitHub stars and forks, and Open VSX downloads before a release and monthly afterward.
-Use those observations to assess discovery and adoption.
-Performance claims require separate measurements across text, vector, image, and scanned documents, with document size, machine, viewer version, and measurement method recorded.
