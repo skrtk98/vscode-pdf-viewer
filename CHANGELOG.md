@@ -2,10 +2,10 @@
 
 ## [1.0.3]
 
-Automatic reload now works with tools that replace the PDF instead of overwriting it, such as Tinymist and `latexmk -pvc` with XeLaTeX or dvipdfmx.
+Automatic reload now works with tools that replace the PDF instead of overwriting it, such as Tinymist's PDF export.
 
 ### Fixed
-- The viewer reloads when a tool writes a temporary file and renames it over the PDF. Previously this was missed for PDFs inside the workspace on Linux, including Remote-SSH, WSL and containers; macOS was probably affected too. Affected tools include Tinymist's PDF export and `latexmk -pvc` when the PDF is made by xdvipdfmx, dvipdfmx or ps2pdf (for example XeLaTeX, or upLaTeX with dvipdfmx).
+- The viewer reloads when a tool writes a temporary file and renames it over the PDF. Previously this was missed for PDFs inside the workspace on Linux, including Remote-SSH, WSL and containers; macOS was probably affected too. Affected tools include Tinymist's PDF export, and `latexmk -pvc` when the PDF is made by xdvipdfmx, dvipdfmx or ps2pdf (for example XeLaTeX, or upLaTeX with dvipdfmx) and the temporary directory (usually `/tmp`) is on the same file system as the PDF.
 - File events that arrive in quick succession are combined: the viewer starts reloading 150 ms after the last event, or 1 second after the first event of a burst if events keep arriving.
 
 ---
