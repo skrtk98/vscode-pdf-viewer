@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.0]
+
+Ctrl+Click a spot in a LaTeX PDF to open the source line that produced it.
+
+### Added
+- `Ctrl+Click` (`Cmd+Click` on macOS) in the PDF opens the matching line of the LaTeX source, using the SyncTeX file next to the PDF (`<name>.synctex.gz` or `<name>.synctex`). Compile with SyncTeX enabled, for example `pdflatex -synctex=1`. Works with pdfLaTeX, XeLaTeX, LuaLaTeX, and pLaTeX or upLaTeX with dvipdfmx. When the path recorded by TeX is outside the workspace, the source is looked up in the PDF's folder and its parent folders up to the workspace folder, so PDFs compiled in a container or on another machine also work.
+
+### Changed
+- On PDFs with SyncTeX data, `Ctrl+Click` on a link now jumps to the source instead of following the link. Click without `Ctrl` to follow links.
+
+---
+
 ## [1.0.3]
 
 Automatic reload now works with tools that replace the PDF instead of overwriting it, such as Tinymist's PDF export.
