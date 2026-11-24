@@ -1091,7 +1091,7 @@ canvas.addEventListener('mouseup', (e) => {
     selectionStartIdx = -1;
     selectionEndIdx = -1;
     selectionPageChars = [];
-    handleLinkClick(currentPage, e);
+    handlePageClick(currentPage, e);
   }
 });
 
@@ -1136,7 +1136,7 @@ scrollContainer.addEventListener('mouseup', (e) => {
     selectionEndIdx = -1;
     selectionPageChars = [];
     refreshScrollPageOverlay(selectionPage);
-    handleLinkClick(selectionPage, e);
+    handlePageClick(selectionPage, e);
   }
 });
 
@@ -1374,36 +1374,96 @@ scrollContainer.addEventListener('dblclick', async (e) => {
  * @param e - The original `mouseup` event.
  */
 function handleLinkClick(pageIndex: number, e: MouseEvent): void {
-  if (!doc) return;
   const pt = pointerToPage(pageIndex, e);
-  if (!pt) return;
+  if (pt) followLinkAt(pageIndex, pt);
+}
 
+/** Return the URI of the link at a point in MuPDF page space, or `null` if there is none. */
+function findLinkAt(pageIndex: number, pt: { x: number; y: number }): { uri: string; external: boolean } | null {
+  if (!doc) return null;
   const page = doc.loadPage(pageIndex);
   const links = page.getLinks();
   page.destroy();
-
   try {
     for (const link of links) {
       const b = link.getBounds();
       if (pt.x >= Math.min(b[0], b[2]) && pt.x <= Math.max(b[0], b[2]) &&
           pt.y >= Math.min(b[1], b[3]) && pt.y <= Math.max(b[1], b[3])) {
-        const uri = link.getURI();
-        if (link.isExternal()) {
-          vscode.postMessage({ type: 'openExternal', url: uri });
-        } else {
-          try {
-            const dest = doc.resolveLinkDestination(uri);
-            goToPage(dest.page);
-          } catch (_e) {
-            const match = uri.match(/#page=(\d+)/i);
-            if (match) goToPage(parseInt(match[1]) - 1);
-          }
-        }
-        return;
+        return { uri: link.getURI(), external: link.isExternal() };
       }
     }
+    return null;
   } finally {
     for (const link of links) link.destroy();
+  }
+}
+
+/** Follow the link at a point in MuPDF page space, if any. */
+function followLinkAt(pageIndex: number, pt: { x: number; y: number }): void {
+  const link = findLinkAt(pageIndex, pt);
+  if (!link || !doc) return;
+  if (link.external) {
+    vscode.postMessage({ type: 'openExternal', url: link.uri });
+    return;
+  }
+  try {
+    const dest = doc.resolveLinkDestination(link.uri);
+    goToPage(dest.page);
+  } catch (_e) {
+    const match = link.uri.match(/#page=(\d+)/i);
+    if (match) goToPage(parseInt(match[1]) - 1);
+  }
+}
+
+/**
+ * Handle a plain click on a page: Ctrl+click (Cmd+click on macOS) asks the host to open the
+ * TeX source at that point through SyncTeX; other clicks follow links.
+ */
+function handlePageClick(pageIndex: number, e: MouseEvent): void {
+  // Any later click supersedes a Ctrl+click still waiting for the host.
+  pendingLinkClick = null;
+  if (!(e.ctrlKey || e.metaKey)) {
+    handleLinkClick(pageIndex, e);
+    return;
+  }
+  const point = pointerToPage(pageIndex, e);
+  const target = point && syncTexPoint(pageIndex, point);
+  if (!point || !target) return;
+  const chars = buildCharList(pageIndex);
+  const closest = findClosestChar(chars, point.x, point.y);
+  const link = findLinkAt(pageIndex, point) !== null;
+  // If there is no SyncTeX data, the host asks to follow the link instead. Remember the document
+  // so the answer is ignored if the PDF has been reloaded or another click came after it.
+  pendingLinkClick = link ? { token: ++linkClickToken, doc: doc!, pageIndex, point } : null;
+  vscode.postMessage({
+    type: 'syncTexInverse', loadId: activeLoadId, page: pageIndex + 1, x: target.x, y: target.y,
+    cjk: closest >= 0 && CJK_CHAR.test(chars[closest].c),
+    link, token: pendingLinkClick?.token,
+  });
+}
+
+let linkClickToken = 0;
+let pendingLinkClick: { token: number; doc: MupdfTypes.Document; pageIndex: number; point: { x: number; y: number } } | null = null;
+
+/** Han, kana, Hangul, and CJK punctuation and full-width forms. */
+const CJK_CHAR = /[\u1100-\u11ff\u2e80-\u9fff\ua960-\ua97f\uac00-\ud7ff\uf900-\ufaff\ufe30-\ufe4f\uff00-\uffef]/;
+
+/**
+ * Convert a point in MuPDF page space to SyncTeX space: points from the top-left corner of the
+ * MediaBox, ignoring the page's /Rotate and CropBox, which TeX knows nothing about.
+ */
+function syncTexPoint(pageIndex: number, point: { x: number; y: number }): { x: number; y: number } | null {
+  if (!doc || !mupdf) return null;
+  const page = doc.loadPage(pageIndex);
+  try {
+    if (!(page instanceof mupdf.PDFPage)) return point;
+    // getTransform maps PDF user space (y up) to page space; invert it to undo /Rotate and CropBox.
+    const toUser = mupdf.Matrix.invert(page.getTransform());
+    const user = transformPoint(toUser, point.x, point.y);
+    const media = mupdf.Rect.transform(page.getBounds('MediaBox'), toUser);
+    return { x: user.x - Math.min(media[0], media[2]), y: Math.max(media[1], media[3]) - user.y };
+  } finally {
+    page.destroy();
   }
 }
 
@@ -2175,6 +2235,13 @@ window.addEventListener('message', (event) => {
   const msg = event.data;
   if (msg.type === 'load') {
     return handleLoad(msg);
+  }
+  if (msg.type === 'followLink') {
+    const click = pendingLinkClick;
+    if (!click || click.token !== msg.token) return;
+    pendingLinkClick = null;
+    if (click.doc === doc) followLinkAt(click.pageIndex, click.point);
+    return;
   }
   if (msg.type === 'password' && pendingPassword && pendingPassword.loadId === msg.loadId) {
     const { data } = pendingPassword;

@@ -31,6 +31,102 @@ describe('PDF links', () => {
       });
     }
   }
+  for (const mode of ['single', 'scroll']) {
+    for (const rotation of [0, 90]) {
+      for (const modifier of ['ctrlKey', 'metaKey']) {
+        it(`sends the page position on ${modifier}+click instead of following a link in ${mode} mode, rotation ${rotation}`, async () => {
+          viewer = createViewer();
+          viewer.evaluate(`viewMode = '${mode}';`);
+          await viewer.load('with-links');
+          viewer.evaluate(`pageRotations.set(0, ${rotation}); pageDimensionsCache.clear(); ${mode === 'scroll' ? 'renderScrollPage(0)' : 'renderPage()'};`);
+          const root = mode === 'single' ? viewer.element('pdf-canvas') : viewer.element('scroll-container');
+          const target = mode === 'single' ? root : root.querySelector('[data-page="0"]')!.querySelector('.scroll-page-canvas')!;
+          const geometry = mode === 'single' ? 'singleTransform' : 'scrollTransforms.get(0)';
+          const point = viewer.evaluate(`transformPoint(${geometry}.matrix, 100, 82)`);
+          const event = { target, [modifier]: true, clientX: point.x * target.rect.width / target.width, clientY: point.y * target.rect.height / target.height };
+          await root.dispatch('mousedown', event);
+          await root.dispatch('mouseup', event);
+          expect(viewer.messages).toHaveLength(1);
+          const [message] = viewer.messages;
+          expect(message).toMatchObject({ type: 'syncTexInverse', page: 1 });
+          expect(message.x).toBeCloseTo(100, 6);
+          expect(message.y).toBeCloseTo(82, 6);
+        });
+      }
+    }
+  }
+  it('sends SyncTeX coordinates without the page /Rotate and CropBox', async () => {
+    viewer = createViewer();
+    viewer.evaluate(`viewMode = 'single';`);
+    await viewer.load('with-links');
+    viewer.evaluate(`{ const o = doc.loadPage(0).getObject(); const box = (v) => { const a = doc.newArray(); for (const n of v) a.push(n); return a; };
+      o.put('MediaBox', box([0, 0, 612, 792])); o.put('CropBox', box([50, 60, 560, 760])); o.put('Rotate', 90); }
+      pageDimensionsCache.clear(); renderPage();`);
+    const root = viewer.element('pdf-canvas');
+    // The PDF user-space point (100, 700) is 100 pt from the left and 92 pt from the top of the MediaBox.
+    const point = viewer.evaluate(`{ const p = doc.loadPage(0); const m = mupdf.Matrix.concat(p.getTransform(), singleTransform.matrix); p.destroy(); transformPoint(m, 100, 700) }`);
+    const event = { target: root, ctrlKey: true, clientX: point.x * root.rect.width / root.width, clientY: point.y * root.rect.height / root.height };
+    await root.dispatch('mousedown', event);
+    await root.dispatch('mouseup', event);
+    const [message] = viewer.messages;
+    expect(message.type).toBe('syncTexInverse');
+    expect(message.x).toBeCloseTo(100, 6);
+    expect(message.y).toBeCloseTo(92, 6);
+  });
+
+  it('follows the link at the clicked point when the host has no SyncTeX data', async () => {
+    viewer = createViewer();
+    viewer.evaluate(`viewMode = 'single';`);
+    await viewer.load('with-links');
+    viewer.evaluate(`renderPage();`);
+    const root = viewer.element('pdf-canvas');
+    const point = viewer.evaluate(`transformPoint(singleTransform.matrix, 100, 82)`);
+    const event = { target: root, ctrlKey: true, clientX: point.x * root.rect.width / root.width, clientY: point.y * root.rect.height / root.height };
+    await root.dispatch('mousedown', event);
+    await root.dispatch('mouseup', event);
+    const [request] = viewer.messages;
+    expect(request).toMatchObject({ type: 'syncTexInverse', link: true, cjk: false });
+    viewer.messages.length = 0;
+    // An answer to an older click is ignored.
+    await viewer.window.dispatch('message', { data: { type: 'followLink', token: request.token - 1 } });
+    expect(viewer.messages).toEqual([]);
+    await root.dispatch('mousedown', event);
+    await root.dispatch('mouseup', event);
+    const [latest] = viewer.messages.splice(0);
+    await viewer.window.dispatch('message', { data: { type: 'followLink', token: latest.token } });
+    expect(viewer.messages).toEqual([{ type: 'openExternal', url: 'https://example.com' }]);
+    // Answers arriving after a newer Ctrl+click: only the newer one is followed.
+    await root.dispatch('mousedown', event);
+    await root.dispatch('mouseup', event);
+    const [older] = viewer.messages.splice(0);
+    await root.dispatch('mousedown', event);
+    await root.dispatch('mouseup', event);
+    const [newer] = viewer.messages.splice(0);
+    await viewer.window.dispatch('message', { data: { type: 'followLink', token: older.token } });
+    expect(viewer.messages).toEqual([]);
+    await viewer.window.dispatch('message', { data: { type: 'followLink', token: newer.token } });
+    expect(viewer.messages).toEqual([{ type: 'openExternal', url: 'https://example.com' }]);
+    viewer.messages.length = 0;
+    // A plain click after a Ctrl+click cancels the pending answer.
+    await root.dispatch('mousedown', event);
+    await root.dispatch('mouseup', event);
+    const [cancelled] = viewer.messages.splice(0);
+    const plain = { ...event, ctrlKey: false };
+    await root.dispatch('mousedown', plain);
+    await root.dispatch('mouseup', plain);
+    viewer.messages.length = 0;
+    await viewer.window.dispatch('message', { data: { type: 'followLink', token: cancelled.token } });
+    expect(viewer.messages).toEqual([]);
+    // After a reload, the answer to a click on the previous file is ignored.
+    await root.dispatch('mousedown', event);
+    await root.dispatch('mouseup', event);
+    const [beforeReload] = viewer.messages.splice(0);
+    await viewer.load('with-links');
+    viewer.messages.length = 0;
+    await viewer.window.dispatch('message', { data: { type: 'followLink', token: beforeReload.token } });
+    expect(viewer.messages).toEqual([]);
+  });
+
   it('resolves an internal link on the clicked scroll page', async () => {
     viewer = createViewer();
     await viewer.load('multi-page');
